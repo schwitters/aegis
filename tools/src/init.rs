@@ -9,6 +9,15 @@ pub struct InitOptions {
     pub brownfield: bool,
 }
 
+// Embed rulesets so aegis init works standalone anywhere
+const RULESET_RUST: &str = include_str!("../../doc/rules/rust-safety.yaml");
+const RULESET_C11_STRICT: &str = include_str!("../../doc/rules/c11-strict.yaml");
+const RULESET_C11_SAFETY: &str = include_str!("../../doc/rules/c11-embedded-safety.yaml");
+const RULESET_CPP_STRICT: &str = include_str!("../../doc/rules/cpp-strict.yaml");
+const RULESET_CPP20_CORE: &str = include_str!("../../doc/rules/cpp20-core.yaml");
+const RULESET_JAVA_ENTERPRISE: &str = include_str!("../../doc/rules/java-enterprise.yaml");
+const RULESET_JAVA_GOOGLE: &str = include_str!("../../doc/rules/java-google-style.yaml");
+
 pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     let doc_dir = root.join("doc");
     let req_dir = doc_dir.join("requirements");
@@ -25,7 +34,56 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     fs::create_dir_all(&deliv_dir).context("Failed to create doc/deliverables")?;
     fs::create_dir_all(&rules_dir).context("Failed to create doc/rules")?;
 
-    // 1. Deliverables Manifest
+    let lang = opts.lang.to_lowercase();
+    let is_safety = opts.profile == "embedded-safety" || opts.profile == "safety";
+
+    // 1. Copy Embedded Rulesets into target doc/rules/
+    match lang.as_str() {
+        "rust" => {
+            let p = rules_dir.join("rust-safety.yaml");
+            if !p.exists() {
+                fs::write(&p, RULESET_RUST)?;
+            }
+        }
+        "c" | "c11" => {
+            let p1 = rules_dir.join("c11-strict.yaml");
+            let p2 = rules_dir.join("c11-embedded-safety.yaml");
+            if !p1.exists() {
+                fs::write(&p1, RULESET_C11_STRICT)?;
+            }
+            if !p2.exists() {
+                fs::write(&p2, RULESET_C11_SAFETY)?;
+            }
+        }
+        "cpp" | "cpp20" | "c++" => {
+            let p1 = rules_dir.join("cpp-strict.yaml");
+            let p2 = rules_dir.join("cpp20-core.yaml");
+            if !p1.exists() {
+                fs::write(&p1, RULESET_CPP_STRICT)?;
+            }
+            if !p2.exists() {
+                fs::write(&p2, RULESET_CPP20_CORE)?;
+            }
+        }
+        "java" => {
+            let p1 = rules_dir.join("java-enterprise.yaml");
+            let p2 = rules_dir.join("java-google-style.yaml");
+            if !p1.exists() {
+                fs::write(&p1, RULESET_JAVA_ENTERPRISE)?;
+            }
+            if !p2.exists() {
+                fs::write(&p2, RULESET_JAVA_GOOGLE)?;
+            }
+        }
+        _ => {
+            let p = rules_dir.join(format!("{}-rules.yaml", lang));
+            if !p.exists() {
+                fs::write(&p, RULESET_RUST)?;
+            }
+        }
+    }
+
+    // 2. Deliverables Manifest
     let manifest_path = deliv_dir.join("manifest.md");
     if !manifest_path.exists() {
         let manifest_content = r#"# Deliverables Manifest
@@ -38,13 +96,11 @@ Required deliverables for gate verification:
         fs::write(&manifest_path, manifest_content)?;
     }
 
-    // 2. Profile YAML
+    // 3. Profile YAML
     let profile_path = doc_dir.join("profile.yaml");
     if !profile_path.exists() {
-        let lang = opts.lang.to_lowercase();
-        let is_safety = opts.profile == "embedded-safety" || opts.profile == "safety";
-        
         let profile_content = if is_safety {
+            let ruleset_name = if lang == "c" || lang == "c11" { "c11-embedded-safety.yaml" } else { "rust-safety.yaml" };
             format!(
                 r#"# Domain Profile: Safety-Critical Systems
 profile: embedded-safety
@@ -52,7 +108,7 @@ rigor: ASIL-D
 language: {lang}
 
 rulesets:
-  - doc/rules/{lang}-safety.yaml
+  - doc/rules/{ruleset_name}
 
 quality_axes:
   functional_suitability: required
@@ -87,9 +143,16 @@ coding_constraints:
   - Zero recursion (statically bounded stack depth).
   - Every @implements annotation must state the realized REQ-ID.
 "#,
-                lang = if lang == "c" || lang == "c11" { "c11-embedded" } else { &lang }
+                lang = &lang,
+                ruleset_name = ruleset_name
             )
         } else {
+            let ruleset_name = match lang.as_str() {
+                "c" | "c11" => "c11-strict.yaml",
+                "cpp" | "cpp20" | "c++" => "cpp-strict.yaml",
+                "java" => "java-enterprise.yaml",
+                _ => "rust-safety.yaml",
+            };
             format!(
                 r#"# Domain Profile: High-Integrity Systems Engineering
 profile: enterprise
@@ -97,7 +160,7 @@ rigor: none
 language: {lang}
 
 rulesets:
-  - doc/rules/{lang}-strict.yaml
+  - doc/rules/{ruleset_name}
 
 quality_axes:
   functional_suitability: required
@@ -132,14 +195,62 @@ coding_constraints:
   - Zero hardcoded credentials or secrets in source code.
   - Every @implements annotation must state the realized REQ-ID.
 "#,
-                lang = &lang
+                lang = &lang,
+                ruleset_name = ruleset_name
             )
         };
 
         fs::write(&profile_path, profile_content)?;
     }
 
-    // 3. Initial Spec or Brownfield Reverse-Engineering Prompt
+    // 4. Create root gate.sh wrapper if not present
+    let gate_sh_path = root.join("gate.sh");
+    if !gate_sh_path.exists() {
+        let gate_sh_content = r#"#!/usr/bin/env bash
+set -euo pipefail
+
+# 🛡️ Aegis Gate Wrapper
+AEGIS_BIN=""
+if command -v aegis >/dev/null 2>&1; then
+    AEGIS_BIN="aegis"
+elif [ -f "tools/aegis/target/release/aegis" ]; then
+    AEGIS_BIN="tools/aegis/target/release/aegis"
+elif [ -f "aegis/target/release/aegis" ]; then
+    AEGIS_BIN="aegis/target/release/aegis"
+elif [ -f "tools/target/release/aegis" ]; then
+    AEGIS_BIN="tools/target/release/aegis"
+elif [ -f "target/release/aegis" ]; then
+    AEGIS_BIN="target/release/aegis"
+else
+    if [ -f "tools/aegis/Cargo.toml" ]; then
+        echo "Building aegis subproject in tools/aegis..."
+        cargo build --release --manifest-path tools/aegis/Cargo.toml
+        AEGIS_BIN="tools/aegis/target/release/aegis"
+    elif [ -f "aegis/Cargo.toml" ]; then
+        echo "Building aegis subproject in aegis/..."
+        cargo build --release --manifest-path aegis/Cargo.toml
+        AEGIS_BIN="aegis/target/release/aegis"
+    fi
+fi
+
+if [ -z "$AEGIS_BIN" ]; then
+    echo "Error: aegis binary not found. Please bind aegis as a subproject or install it." >&2
+    exit 1
+fi
+
+exec "$AEGIS_BIN" gate --profile doc/profile.yaml "$@"
+"#;
+        fs::write(&gate_sh_path, gate_sh_content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&gate_sh_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&gate_sh_path, perms)?;
+        }
+    }
+
+    // 5. Initial Spec or Brownfield Reverse-Engineering Prompt
     if opts.brownfield {
         let prompt_path = doc_dir.join("REVERSE_SPEC_EXTRACTION_PROMPT.md");
         if !prompt_path.exists() {
@@ -268,19 +379,22 @@ Initial thoughts on technology stack, components, and protocol boundaries.
     println!("{}", "✔ Aegis scaffolding initialized successfully!".green().bold());
     println!("  Directory: {}", doc_dir.display().to_string().cyan());
     println!("  Profile:   {}", doc_dir.join("profile.yaml").display().to_string().yellow());
+    println!("  Ruleset:   {}", rules_dir.display().to_string().yellow());
+    println!("  Gate script: {}", root.join("gate.sh").display().to_string().green());
     if opts.brownfield {
         println!();
         println!("{}", "Brownfield Migration Artifacts Created:".bold());
         println!("  1. Prompt template: {}", doc_dir.join("REVERSE_SPEC_EXTRACTION_PROMPT.md").display().to_string().cyan());
         println!("  2. Baseline REQ/UC: {} & {}", req_dir.join("REQ-001.md").display(), uc_dir.join("UC-001.md").display());
-        println!("  3. Next step: Run prompt in Frontier model, tag @implements in code, then run: aegis trace");
+        println!("  3. Next step: Run prompt in Frontier model, tag @implements in code, then run: ./gate.sh");
     } else {
         println!();
         println!("{}", "Greenfield Next Steps:".bold());
         println!("  1. Refine specification in {}", doc_dir.join("001_initial_spec.md").display().to_string().cyan());
         println!("  2. Run blind review with Frontier Model B");
         println!("  3. Derive requirements in doc/requirements/ and test plan in doc/testplan/");
-        println!("  4. Implement with 27B model (@implements REQ-xxx) and run: aegis gate --profile doc/profile.yaml");
+        println!("  4. Synthesize instructions: ./gate.sh / aegis instructions --out AGENT_INSTRUCTIONS.md");
+        println!("  5. Implement with 27B model (@implements REQ-xxx) and run: ./gate.sh");
     }
 
     Ok(())
