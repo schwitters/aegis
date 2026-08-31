@@ -13,9 +13,9 @@ mod tests {
 
     #[test]
     fn test_id_parsing() {
-        let text = "[REQ-001, REQ-002, UC-010, TEST-999]";
+        let text = "[REQ-001, REQ-FUNC-002, UC-QS-010, TEST-CAP-999]";
         let ids = traceability::parse_ids(text);
-        assert_eq!(ids, vec!["REQ-001", "REQ-002", "UC-010", "TEST-999"]);
+        assert_eq!(ids, vec!["REQ-001", "REQ-FUNC-002", "UC-QS-010", "TEST-CAP-999"]);
     }
 
     #[test]

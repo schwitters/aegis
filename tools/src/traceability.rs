@@ -29,11 +29,11 @@ pub struct TraceReport {
 }
 
 pub fn parse_ids(raw: &str) -> Vec<String> {
-    let id_re = Regex::new(r"\b(REQ|UC|TEST)-(\d+)\b").unwrap();
+    let id_re = Regex::new(r"\b(REQ|UC|TEST)-([A-Za-z0-9_-]+)\b").unwrap();
     let mut ids = Vec::new();
     for cap in id_re.captures_iter(raw) {
-        if let (Some(prefix), Some(num)) = (cap.get(1), cap.get(2)) {
-            ids.push(format!("{}-{}", prefix.as_str(), num.as_str()));
+        if let (Some(prefix), Some(suffix)) = (cap.get(1), cap.get(2)) {
+            ids.push(format!("{}-{}", prefix.as_str(), suffix.as_str()));
         }
     }
     ids
@@ -107,8 +107,8 @@ pub fn collect_code(src_dirs: &[PathBuf], trace: &mut Trace) -> Result<()> {
     let valid_exts = [
         "py", "js", "ts", "go", "rs", "java", "c", "cpp", "h", "hpp",
     ];
-    let implements_re = Regex::new(r"@implements\s+(REQ-\d+)").unwrap();
-    let verifies_re = Regex::new(r"@verifies\s+(TEST-\d+)").unwrap();
+    let implements_re = Regex::new(r"@implements\s+(REQ-[A-Za-z0-9_-]+)").unwrap();
+    let verifies_re = Regex::new(r"@verifies\s+(TEST-[A-Za-z0-9_-]+)").unwrap();
 
     for src_dir in src_dirs {
         if !src_dir.exists() {
