@@ -1,0 +1,30 @@
+name: Aegis Quality Gate CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  gate:
+    name: Aegis Execution Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Build Aegis Standalone Binary
+        run: cargo build --release --manifest-path tools/Cargo.toml
+
+      - name: Run Aegis Unit Tests
+        run: cargo test --manifest-path tools/Cargo.toml
+
+      - name: Run Aegis Execution Gate (Traceability & Quality Gate)
+        run: ./tools/target/release/aegis gate --profile doc/enterprise.yaml

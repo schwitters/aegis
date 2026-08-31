@@ -137,6 +137,9 @@ aegis issue close ISSUE-0001
 ### 5. Execute Quality Gate
 
 ```bash
+# Synthesize AGENT_INSTRUCTIONS.md for the 27B implementation model
+aegis instructions --profile doc/enterprise.yaml --out AGENT_INSTRUCTIONS.md
+
 # Run fail-closed verification pipeline against domain profile
 aegis gate --profile doc/embedded-safety.yaml
 ```
@@ -149,6 +152,8 @@ aegis gate --profile doc/embedded-safety.yaml
 ├── doc/
 │   ├── dev-workflow.md         # Full V-Model specification & DoD
 │   ├── change-runbook.md       # Change management & impact protocol
+│   ├── adoption-guide.md       # Greenfield & brownfield practical guide
+│   ├── prompts/                # Complete Prompt Playbook (Stages 01 - 07)
 │   ├── process-evaluation.md   # Architectural evaluation
 │   ├── process-dashboard.html  # Interactive UI & simulator
 │   ├── embedded-safety.yaml    # ISO 26262 / ASIL-D profile
@@ -170,6 +175,7 @@ aegis gate --profile doc/embedded-safety.yaml
 
 ## 📄 Documentation
 
+- 📋 [Prompt Playbook & Instructions Catalog](doc/prompts/README.md)
 - 🚀 [Adoption Guide (Greenfield & Brownfield)](doc/adoption-guide.md)
 - 📖 [Development Workflow Specification](doc/dev-workflow.md)
 - 🔄 [Change Management Runbook](doc/change-runbook.md)

@@ -11,6 +11,7 @@ It enforces end-to-end **Requirement → Usecase → Test → Code** traceabilit
 | [`tools/gate.sh`](../tools/gate.sh) | Profile-aware, fail-closed verification gate wrapper (delegates to `aegis gate`). Reads `doc/<profile>.yaml`, enforcing stages and coverage thresholds. |
 | [Profiles](embedded-safety.yaml) | One process, N profiles: `embedded-safety.yaml` (ISO 26262, ASIL-D) and `enterprise.yaml` configure domain rigor. |
 | [`doc/rules/`](rules/README.md) | Reusable, strict **Coding Rulesets** (`c11-strict.yaml`, `c11-embedded-safety.yaml`, `cpp20-core.yaml`, `cpp-strict.yaml`, `rust-safety.yaml`, `java-enterprise.yaml`, `java-google-style.yaml`). |
+| [`doc/prompts/`](prompts/README.md) | Standardized **Prompt Playbook** (Stages 01 - 07: Ideation, Blind Review, Derivation, Shift-Left Tests, 27B Synthesis, Implementation, Final Audit). |
 | [`doc/adoption-guide.md`](adoption-guide.md) | Practical adoption guide for Greenfield (from scratch) and Brownfield (legacy migration) projects. |
 | [`doc/change-runbook.md`](change-runbook.md) | Structured change management — blast radius analysis, impact depth classification, and step-by-step confirmation. |
 | [`doc/dev-workflow.md`](dev-workflow.md) | Full specification of the Spec-Driven Multi-Model Development Workflow. |
@@ -23,7 +24,7 @@ It enforces end-to-end **Requirement → Usecase → Test → Code** traceabilit
 Coding standards (C11, C++, Rust, Java) are decoupled from domain profiles and operate across three tiers:
 1. **Agent Instructions:** Strict prompt constraints given to the 27B implementation model.
 2. **Review Rubric:** Explicit audit checklist for Frontier models during blind parallel reviews (`RULE-XXX-YYY`).
-3. **CI Gate:** Statically mapped to compiler, linter, and SAST checks (`clang-tidy`, `clippy`, `checkstyle`, `ruff`).
+3. **CI Gate:** Statically mapped to compiler, linter, and SAST checks (`clang-tidy`, `clippy`, `checkstyle`, `scan-build`).
 
 See [`doc/rules/README.md`](rules/README.md) for details.
 

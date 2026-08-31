@@ -1,6 +1,7 @@
 pub mod gate;
 pub mod impact;
 pub mod init;
+pub mod instructions;
 pub mod issue;
 pub mod profile;
 pub mod traceability;
@@ -89,6 +90,29 @@ mod tests {
         issue::close_issue(&doc_dir, "ISSUE-0001").unwrap();
         let issues_after = issue::collect_issues(&doc_dir).unwrap();
         assert_eq!(issues_after[0].meta.status, "done");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_instructions_synthesis() {
+        let temp_dir = std::env::temp_dir().join(format!("dev_process_synth_{}", std::process::id()));
+        let doc_dir = temp_dir.join("doc");
+        std::fs::create_dir_all(&doc_dir).unwrap();
+
+        let profile_content = "profile: test-profile\nlanguage: rust\ncoding_constraints:\n  - Strict memory safety.\n";
+        std::fs::write(doc_dir.join("profile.yaml"), profile_content).unwrap();
+
+        let synth = instructions::synthesize_instructions(instructions::SynthesizeOptions {
+            root: temp_dir.clone(),
+            profile_path: None,
+            out: None,
+        })
+        .unwrap();
+
+        assert!(synth.contains("test-profile"));
+        assert!(synth.contains("Strict memory safety."));
+        assert!(synth.contains("@implements REQ-XXX"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -78,6 +78,15 @@ enum Commands {
         #[arg(long, default_value = ".")]
         root: String,
     },
+    /// Synthesize AGENT_INSTRUCTIONS.md for the 27B implementation model
+    Instructions {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        out: Option<String>,
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -409,6 +418,33 @@ fn main() -> Result<()> {
                     brownfield,
                 },
             )?;
+        }
+        Commands::Instructions {
+            profile,
+            out,
+            root,
+        } => {
+            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let prof_path = profile.map(|p| {
+                if Path::new(&p).is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    root_path.join(p)
+                }
+            });
+            let out_path = out.map(PathBuf::from);
+
+            let rendered = aegis::instructions::synthesize_instructions(
+                aegis::instructions::SynthesizeOptions {
+                    root: root_path,
+                    profile_path: prof_path,
+                    out: out_path.clone(),
+                },
+            )?;
+
+            if out_path.is_none() {
+                print!("{}", rendered);
+            }
         }
     }
 
