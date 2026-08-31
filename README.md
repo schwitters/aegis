@@ -91,16 +91,33 @@ flowchart TD
 
 ---
 
-## 🚀 Quick Start
+## ⚡ One-Line Bootstrap (Add Aegis to any Project)
 
-### 1. Build Aegis CLI
+Run this single command inside any new or existing repository to build and scaffold Aegis immediately:
 
 ```bash
-# Build release binary (zero external C/Python dependencies)
-cargo build --release --manifest-path tools/Cargo.toml
+# Greenfield (New Repository):
+git clone --depth 1 https://github.com/schwitters/aegis.git /tmp/aegis-bin && cargo build --release --manifest-path /tmp/aegis-bin/Cargo.toml && /tmp/aegis-bin/target/release/aegis init --profile enterprise --lang rust && rm -rf /tmp/aegis-bin
+
+# Brownfield (Existing Codebase Migration):
+git clone --depth 1 https://github.com/schwitters/aegis.git /tmp/aegis-bin && cargo build --release --manifest-path /tmp/aegis-bin/Cargo.toml && /tmp/aegis-bin/target/release/aegis init --brownfield --profile enterprise --lang rust && rm -rf /tmp/aegis-bin
+
+# Alternatively, bind as a Git Submodule:
+git submodule add https://github.com/schwitters/aegis.git tools/aegis && cargo build --release --manifest-path tools/aegis/Cargo.toml && ./tools/aegis/target/release/aegis init --profile enterprise --lang rust
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Build Aegis CLI Locally
+
+```bash
+# Build release binary (zero external dependencies)
+cargo build --release
 
 # Add to PATH or symlink
-export PATH="$PATH:$(pwd)/tools/target/release"
+export PATH="$PATH:$(pwd)/target/release"
 ```
 
 ### 2. Verify Traceability
