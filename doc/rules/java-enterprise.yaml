@@ -1,0 +1,66 @@
+# Ruleset: Java Enterprise Backend & Clean Architecture
+# Alignment: Java 17/21 LTS, Effective Java, SpotBugs, OWASP Secure Coding
+
+ruleset: java-enterprise
+description: >
+  Strict Java rules for maintainable, long-lived, and secure enterprise services.
+  Focus on immutability by default, records, null-safety, and strict layer segregation.
+standard: Java 17 / 21 LTS
+language: java
+
+linter_config:
+  tool: checkstyle / spotbugs
+  config_file: checkstyle.xml
+  flags: ["-Dcheckstyle.config.location=checkstyle.xml"]
+
+rules:
+  - id: RULE-JAVA-001
+    title: Immutability by Default & Java Records
+    category: design
+    severity: error
+    instruction: >
+      Declare DTOs, value objects, and event payloads as 'record'.
+      Classes must be 'final' by default, and fields 'private final'.
+      Avoid mutable state outside dedicated domain aggregate roots.
+    rationale: Eliminates side effects and simplifies concurrent execution.
+
+  - id: RULE-JAVA-002
+    title: Null-Safety & Zero Null Return Values
+    category: defensive_programming
+    severity: error
+    instruction: >
+      Methods must never return 'null'. Use 'Optional<T>' for optional values,
+      and empty collections ('List.of()', 'Collections.emptyList()') for collections.
+      Validate parameters with 'Objects.requireNonNull()'.
+    rationale: Eliminates NullPointerExceptions across interface boundaries.
+    linter_check: "spotbugs:NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"
+
+  - id: RULE-JAVA-003
+    title: Zero Generic Exception Catching or Swallowing
+    category: error_handling
+    severity: error
+    instruction: >
+      Never catch 'Exception' or 'Throwable' without rethrowing or logging.
+      Throw specific domain exceptions rather than generic 'RuntimeException'.
+      Always attach the root cause exception when rethrowing.
+    rationale: Preserves fault traceability in distributed enterprise logging systems.
+    linter_check: "checkstyle:IllegalCatch,checkstyle:IllegalThrows"
+
+  - id: RULE-JAVA-004
+    title: Structured Logging Over System.out
+    category: observability
+    severity: error
+    instruction: >
+      Exclusively use SLF4J loggers ('private static final Logger log = ...').
+      Attach structured context (MDC / correlation ID).
+      Never use 'System.out.println' or 'e.printStackTrace()'.
+    rationale: Enables distributed log aggregation and tracing in cloud environments.
+
+  - id: RULE-JAVA-005
+    title: Constructor Injection & Interface Segregation
+    category: design
+    severity: warning
+    instruction: >
+      Use constructor injection for all mandatory dependencies (avoid field injection).
+      Services and repositories communicate via interfaces to ensure testability with test doubles.
+    rationale: Clear dependency graphs and straightforward unit tests without heavyweight DI containers.

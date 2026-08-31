@@ -1,0 +1,182 @@
+# Ruleset: Strict, Defensive C11 for Production Backends & Systems
+# Distilled into the RULE-C11 schema for review rubrics and automated gate mapping.
+
+ruleset: c11-strict
+description: >
+  Strict, defensive C11 for general production software (services, backends, CLI tools).
+  Focus on explicit error propagation, memory and resource safety, clean platform boundaries,
+  and structured observability. For safety-certified firmware, see c11-embedded-safety.yaml.
+standard: ISO/IEC 9899:2011 (C11)
+language: c
+
+linter_config:
+  tool: clang-tidy
+  config_file: .clang-tidy
+  flags: ["-Wall", "-Wextra", "-pedantic", "-std=c11"]
+
+rules:
+  - id: RULE-C11-001
+    title: Explicit, Status-Based Error Handling
+    category: error_handling
+    severity: error
+    instruction: >
+      Every fallible function must return an explicit status, result, or error code.
+      No hidden non-local jumps (setjmp/longjmp). Validate preconditions early and fail-fast.
+    rationale: Makes error propagation visible and verifiable at caller sites.
+
+  - id: RULE-C11-002
+    title: Never Silently Ignore Return Values
+    category: error_handling
+    severity: error
+    instruction: >
+      Every return value of a fallible function must be evaluated. Casting to (void)
+      to suppress error inspection is forbidden.
+    rationale: Prevents silent continuation in corrupted system states.
+    linter_check: "clang-tidy:bugprone-unused-return-value"
+
+  - id: RULE-C11-003
+    title: Preserve errno Immediately After Failure
+    category: error_handling
+    severity: error
+    instruction: >
+      Copy errno (or GetLastError() on Windows) into a local variable immediately
+      after a failed call before any other call (including logging) can overwrite it.
+    rationale: Any subsequent runtime/system call will overwrite errno.
+
+  - id: RULE-C11-004
+    title: Async-Signal-Safe Signal Handlers Only
+    category: concurrency
+    severity: error
+    instruction: >
+      Signal handlers must only invoke async-signal-safe functions. Zero allocations,
+      zero I/O logging in signal handlers. Communicate with main loop via volatile sig_atomic_t
+      or a self-pipe.
+    rationale: Non-async-signal-safe calls inside handlers cause deadlocks and undefined behavior.
+
+  - id: RULE-C11-005
+    title: Overflow-Checked Allocation Arithmetic
+    category: memory
+    severity: error
+    instruction: >
+      Allocation sizes must be computed with overflow checks. Never perform unchecked
+      malloc(n * size); use checked multiplication or explicit precondition bounds.
+    rationale: Integer overflow in allocation size leads to heap buffer overflow.
+
+  - id: RULE-C11-006
+    title: Explicit, Range-Checked Boundary Conversions
+    category: types
+    severity: error
+    instruction: >
+      Narrowing and sign conversions across system boundaries must be explicit and checked
+      (e.g., ssize_t return from read/write prior to size_t assignment).
+    rationale: Prevents off-by-bounds and integer wraparound exploits.
+    linter_check: "clang-tidy:bugprone-narrowing-conversions"
+
+  - id: RULE-C11-007
+    title: Zero Insecure C-String Functions
+    category: memory_safety
+    severity: error
+    instruction: >
+      Do not use strcpy, strcat, sprintf, or gets. Use bounded alternatives such as
+      snprintf. Every buffer write must be size-aware; every string operation must be length-aware.
+    rationale: Classic cause of buffer overflow vulnerabilities.
+    linter_check: "clang-tidy:clang-analyzer-security.insecureAPI.strcpy,cert-msc24-c"
+
+  - id: RULE-C11-008
+    title: assert Reserved Strictly for Programmer Invariants
+    category: defensive_programming
+    severity: error
+    instruction: >
+      Use assert only for unreachable invariant violations. Never use assert to validate
+      external inputs, network payloads, or runtime errors that must be handled in release builds.
+    rationale: assert is stripped in NDEBUG builds.
+
+  - id: RULE-C11-009
+    title: Structured Resource Cleanup Pattern
+    category: resource_management
+    severity: error
+    instruction: >
+      Every acquired resource (memory, file descriptor, socket, lock) must have a single
+      predictable cleanup path (e.g. goto cleanup single-exit pattern) rather than scattered returns.
+    rationale: Scattered return paths are the primary cause of resource leaks during error handling.
+
+  - id: RULE-C11-010
+    title: Zero Unchecked Pointer Arithmetic
+    category: memory_safety
+    severity: error
+    instruction: >
+      Pointer arithmetic without boundary verification is forbidden. Pointers must be verified
+      against NULL prior to dereference where nullable.
+    rationale: Unchecked pointer math directly causes out-of-bounds memory accesses.
+
+  - id: RULE-C11-011
+    title: Isolate Platform Code by Translation Unit, Not Scattered #ifdef
+    category: design
+    severity: error
+    instruction: >
+      Isolate platform-specific logic into dedicated files (_posix.c, _win.c) selected by the
+      build system. Keep platform types hidden behind opaque handles.
+    rationale: Scattered #ifdef directives make code unreadable and untestable.
+
+  - id: RULE-C11-012
+    title: Zero Shared Mutable State Without Formal Synchronization
+    category: concurrency
+    severity: error
+    instruction: >
+      Avoid shared mutable state where possible. Use <stdatomic.h> for lock-free counters/flags.
+      For non-trivial structures, enforce access via a mutex encapsulated in a module abstraction.
+    rationale: Prevents data races and deadlocks.
+
+  - id: RULE-C11-013
+    title: Centralized Logging Abstraction & Zero Secrets in Logs
+    category: observability
+    severity: error
+    instruction: >
+      Route all logging through a centralized logging interface. Never log credentials,
+      tokens, or sensitive payload data.
+    rationale: Leaking credentials in log files violates security and compliance standards.
+
+  - id: RULE-C11-014
+    title: Strongest Applicable Types & Const-Correctness
+    category: types
+    severity: error
+    instruction: >
+      Use <stdint.h> fixed-width integers, size_t for lengths, and bool for boolean states.
+      Mark read-only pointer parameters and constant tables as const (and static where file-local).
+    rationale: Const-correctness enforces API contracts at compile time.
+
+  - id: RULE-C11-015
+    title: Self-Contained Headers with Declarations Only
+    category: design
+    severity: error
+    instruction: >
+      Every header must compile in isolation. Headers declare interfaces; translation units
+      define them. Use consistent include guards.
+    rationale: Prevents brittle include-order dependencies.
+
+  - id: RULE-C11-016
+    title: Zero Speculative or Guessed API Signatures
+    category: defensive_programming
+    severity: error
+    instruction: >
+      When using third-party or system APIs, consult header declarations and documentation
+      rather than guessing signatures.
+    rationale: Guessing signatures causes type mismatches and undefined behavior.
+
+  - id: RULE-C11-017
+    title: Clean Compiler Warnings Without Global Suppression
+    category: build
+    severity: error
+    instruction: >
+      Code must compile cleanly without warnings under -Wall -Wextra -pedantic -std=c11.
+    rationale: Compiler warnings reveal fundamental defect classes prior to runtime testing.
+    linter_check: "compiler:-Wall,-Wextra,-pedantic"
+
+  - id: RULE-C11-018
+    title: Minimal, Scoped Changes
+    category: design
+    severity: error
+    instruction: >
+      Keep modifications minimal and targeted. Preserve existing behavior unless explicitly
+      modified by requirements. Avoid unsolicited large-scale refactorings.
+    rationale: Minimizes regression risk and blast radius.

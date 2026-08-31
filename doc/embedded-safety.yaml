@@ -1,0 +1,87 @@
+# Profile: Safety-Critical Embedded Systems
+# Aligned with ISO 26262 (automotive). rigor = ASIL controls rigor.
+# Analogous to DO-178C (DAL A-E), IEC 62304 (Class A-C), IEC 61508 (SIL).
+
+profile: embedded-safety
+description: >
+  Resource-constrained, safety-critical firmware. Determinism,
+  reliability, and auditable correctness strictly precede convenience.
+rigor: ASIL-D          # QM | ASIL-A | ASIL-B | ASIL-C | ASIL-D
+language: c
+
+# --- Rulesets (Modular Composition) ------------------------------------------
+rulesets:
+  - doc/rules/c11-embedded-safety.yaml
+  # - doc/rules/rust-safety.yaml
+
+# --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
+quality_axes:
+  functional_suitability: required
+  performance_efficiency: required      # Timing budgets, memory footprints, CPU limits
+  reliability:            required      # Fault tolerance, fail-safe modes, recovery
+  safety:                 required      # Fail-safe, hazard detection, mitigation
+  security:               required      # Secure boot, bus authentication, tamper resistance
+  maintainability:        recommended
+  compatibility:          recommended   # HW interfaces, bus protocols (CAN, SPI, I2C)
+  interaction_capability: not_applicable # Headless firmware
+  flexibility:            not_applicable # Fixed target hardware
+
+# --- 2. Gate Stages ----------------------------------------------------------
+gate:
+  build:
+    active: true
+    note: Cross-compile for target architecture; zero host assumptions.
+  lint:
+    active: true
+    standard: MISRA-C:2012      # Mandatory for ASIL >= B
+    fail_on: violation
+  static_analysis:
+    active: true
+    checks: [data_flow, control_flow, runtime_errors, stack_usage]
+    note: No dynamic memory -> static stack/heap boundary analysis mandatory.
+  security:
+    active: true
+    checks: [cwe, dependency_audit]
+  tests:
+    active: true
+    levels: [unit, integration, hil]   # Hardware-in-the-Loop for safety verification
+  coverage:
+    active: true
+    metric: mcdc                # ASIL-D: MC/DC. (A: statement, B/C: branch)
+    threshold: 100
+    fail_below: true
+  traceability:
+    active: true
+    bidirectional: true         # Requirement <-> Test <-> Code in both directions
+  deliverables:
+    active: true
+
+# --- 3. Deliverables ---------------------------------------------------------
+deliverables:
+  - flash_image                 # Target binary (ELF/HEX/BIN)
+  - memory_map                  # Memory layout, stack/heap proof
+  - timing_report               # WCET analysis / response times
+  - coverage_report             # MC/DC coverage certificate
+  - traceability_matrix
+  - safety_case                 # Structured safety justification (GSN)
+  - build_instructions
+
+# --- 4. Coding Constraints (Strict Directives for 27B Model) -----------------
+coding_constraints:
+  - Zero dynamic memory allocation; malloc/calloc/realloc/free/alloca are strictly forbidden.
+  - Zero recursion (stack depth must be statically bounded).
+  - Every loop must have a statically provable upper bound.
+  - Return values of safety-critical functions must always be explicitly checked.
+  - No implicit type promotions; explicit fixed-width types (uint8_t instead of int).
+  - Zero functions with undefined behavior upon error conditions.
+  - Every @implements annotation must state the REQ-ID of the realized requirement.
+
+# --- 5. Agent Instructions Fragment -----------------------------------------
+agent_instructions: |
+  TARGET PLATFORM: Resource-constrained embedded hardware, safety-critical (ASIL-D).
+  Write deterministic, statically verifiable code conforming to MISRA-C:2012.
+  Use zero dynamic memory allocation at runtime, zero recursion, and zero unbounded loops.
+  Always inspect return values of system calls. For every fulfilled requirement, place an
+  `@implements REQ-XXX` annotation in the source code. Structure boolean logic such that MC/DC
+  coverage is attainable (no unreachable branches or masked boolean conditions).
+  When in doubt: safety and verifiability strictly supersede brevity or cleverness.

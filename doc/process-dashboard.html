@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis | Agentic Systems Engineering Cockpit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #080b14;
+      --bg-card: rgba(18, 24, 38, 0.75);
+      --bg-card-hover: rgba(28, 38, 60, 0.85);
+      --border-glow: rgba(99, 102, 241, 0.25);
+      --accent-cyan: #06b6d4;
+      --accent-purple: #8b5cf6;
+      --accent-pink: #ec4899;
+      --accent-amber: #f59e0b;
+      --accent-emerald: #10b981;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.15) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.12) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      padding: 2.5rem;
+      overflow-x: hidden;
+    }
+
+    /* Container & Layout */
+    .container {
+      max-width: 1380px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      position: relative;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      border-radius: 9999px;
+      color: #a5b4fc;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-cyan);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    h1 {
+      font-size: 2.75rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #fff 30%, #a5b4fc 70%, #f472b6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      margin-top: 0.5rem;
+      font-weight: 400;
+    }
+
+    /* Primary CTA Button */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.85rem 1.6rem;
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.95rem;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.5);
+      transition: all 0.25s ease;
+      text-decoration: none;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 15px 30px -5px rgba(236, 72, 153, 0.6);
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 1.5rem;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-glow);
+      transform: translateY(-4px);
+      background: var(--bg-card-hover);
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+      opacity: 0.8;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 2.1rem;
+      font-weight: 800;
+      margin-top: 0.4rem;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: -0.02em;
+    }
+
+    /* Main Content Sections */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-bottom: 2.5rem;
+    }
+
+    @media (max-width: 1024px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .panel-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    /* Pipeline Process Steps */
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      position: relative;
+    }
+
+    .pipeline-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 1.25rem;
+      padding: 1.1rem 1.25rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 14px;
+      transition: all 0.25s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .pipeline-step:hover, .pipeline-step.active {
+      background: rgba(99, 102, 241, 0.1);
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateX(6px);
+    }
+
+    .step-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .step-1 { background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); }
+    .step-2 { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); }
+    .step-3 { background: rgba(236, 72, 153, 0.2); color: var(--accent-pink); }
+    .step-4 { background: rgba(245, 158, 11, 0.2); color: var(--accent-amber); }
+    .step-5 { background: rgba(16, 185, 129, 0.2); color: var(--accent-emerald); }
+
+    .step-info {
+      flex: 1;
+    }
+
+    .step-name {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .step-desc {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .step-pill {
+      font-size: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+      white-space: nowrap;
+    }
+
+    /* Terminal Console */
+    .terminal {
+      background: #030712;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 1.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: #e2e8f0;
+      min-height: 380px;
+      overflow-y: auto;
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-green { background: #10b981; }
+
+    .cmd-prompt { color: var(--accent-cyan); font-weight: 700; }
+    .cmd-out-info { color: #60a5fa; }
+    .cmd-out-success { color: #34d399; font-weight: 600; }
+    .cmd-out-accent { color: #f472b6; font-weight: 700; }
+
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 1.25rem;
+    }
+
+    .btn-group .btn {
+      padding: 0.6rem 1.1rem;
+      font-size: 0.85rem;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: none;
+    }
+
+    .btn-group .btn:hover {
+      background: rgba(99, 102, 241, 0.3);
+      border-color: #a5b4fc;
+      transform: translateY(-2px);
+    }
+
+    .radar-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1.5rem 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- Header -->
+    <header>
+      <div>
+        <div class="badge">
+          <span class="badge-dot"></span>
+          Spec-Driven Multi-Model Framework 2026
+        </div>
+        <h1>Aegis Process Cockpit</h1>
+        <p class="subtitle">Deterministic Systems Engineering with Frontier Models & Local 27B Implementation</p>
+      </div>
+      <div>
+        <button class="btn" onclick="runSimulatedGate()">
+          ⚡ Run aegis gate
+        </button>
+      </div>
+    </header>
+
+    <!-- Top Key Metrics -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Traceability Index</div>
+        <div class="stat-value" style="color: #34d399;">100%</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">REQ ↔ UC ↔ TEST ↔ CODE</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Model Economics</div>
+        <div class="stat-value" style="color: #60a5fa;">Frontier + 27B</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">Asymmetric Architecture</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Quality Gates</div>
+        <div class="stat-value" style="color: #f472b6;">Fail-Closed</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">10 Verification Stages</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Safety Integrity</div>
+        <div class="stat-value" style="color: #fbbf24;">ASIL-D / ISO 26262</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem;">Profile-Tailored</div>
+      </div>
+    </div>
+
+    <!-- Main Section -->
+    <div class="main-grid">
+      
+      <!-- Interactive Pipeline Overview -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            End-to-End Engineering Pipeline
+          </div>
+          <span style="font-size: 0.8rem; color: var(--text-muted); font-family: 'JetBrains Mono';">CLICK TO SIMULATE</span>
+        </div>
+
+        <div class="pipeline">
+          
+          <div class="pipeline-step" onclick="showStepDetails(1)">
+            <div class="step-icon step-1">01</div>
+            <div class="step-info">
+              <div class="step-name">Ideation & Initial Spec</div>
+              <div class="step-desc">Interactive product ideation with Frontier Model A</div>
+            </div>
+            <div class="step-pill">doc/001_initial_spec.md</div>
+          </div>
+
+          <div class="pipeline-step" onclick="showStepDetails(2)">
+            <div class="step-icon step-2">02</div>
+            <div class="step-info">
+              <div class="step-name">Formal Derivation & Shift-Left</div>
+              <div class="step-desc">Requirements (ISO 25010), Use Cases & Test Plan BEFORE Code</div>
+            </div>
+            <div class="step-pill">REQ- / UC- / TEST-</div>
+          </div>
+
+          <div class="pipeline-step" onclick="showStepDetails(3)">
+            <div class="step-icon step-3">03</div>
+            <div class="step-info">
+              <div class="step-name">Blind Parallel Review</div>
+              <div class="step-desc">Independent Frontier Model B audits spec to eliminate drift</div>
+            </div>
+            <div class="step-pill">Anti-Sycophancy</div>
+          </div>
+
+          <div class="pipeline-step" onclick="showStepDetails(4)">
+            <div class="step-icon step-4">04</div>
+            <div class="step-info">
+              <div class="step-name">Synthesis & 27B Implementation</div>
+              <div class="step-desc">Strict rules (doc/rules/) + @implements Code Annotations</div>
+            </div>
+            <div class="step-pill">Rust / C11 / Java</div>
+          </div>
+
+          <div class="pipeline-step" onclick="showStepDetails(5)">
+            <div class="step-icon step-5">05</div>
+            <div class="step-info">
+              <div class="step-name">Automated Gate & Evolution</div>
+              <div class="step-desc">aegis trace, impact analysis, and fail-closed CI gate</div>
+            </div>
+            <div class="step-pill">aegis gate</div>
+          </div>
+
+        </div>
+
+        <div class="btn-group">
+          <button class="btn" onclick="runTraceSim()">🔍 aegis trace</button>
+          <button class="btn" onclick="runImpactSim()">💥 aegis impact (Blast Radius)</button>
+          <button class="btn" onclick="runIssueSim()">📋 aegis issue list</button>
+        </div>
+      </div>
+
+      <!-- Live Terminal Console -->
+      <div class="panel" style="padding: 1.25rem;">
+        <div class="terminal">
+          <div class="terminal-header">
+            <span class="terminal-dot dot-red"></span>
+            <span class="terminal-dot dot-yellow"></span>
+            <span class="terminal-dot dot-green"></span>
+            <span style="margin-left: 0.5rem; font-size: 0.75rem; color: #64748b;">aegis v0.1.0-release (Rust)</span>
+          </div>
+          <div class="terminal-body" id="terminal-content">
+            <span class="cmd-prompt">$</span> <span class="cmd-out-accent">aegis</span> --help<br>
+            <span style="color: #94a3b8;">Aegis: Spec-Driven Systems Engineering Toolkit (Traceability, Impact Analysis, Issues, Profiles, and Quality Gate)</span><br><br>
+            <span class="cmd-out-info">Commands:</span><br>
+            &nbsp;&nbsp;trace&nbsp;&nbsp;&nbsp;&nbsp;Requirement ↔ UC ↔ Test ↔ Code Traceability Matrix<br>
+            &nbsp;&nbsp;impact&nbsp;&nbsp;&nbsp;Blast-Radius & Structured Plan for Bugs/Features<br>
+            &nbsp;&nbsp;gate&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Profile-Aware Execution Gate (fail-closed CI)<br>
+            &nbsp;&nbsp;issue&nbsp;&nbsp;&nbsp;&nbsp;doc/issues/ Lifecycle Tracking & Blocker Enforcement<br>
+            &nbsp;&nbsp;profile&nbsp;&nbsp;Domain Profile Inspector (ASIL / ISO 25010)<br><br>
+            <span style="color: #64748b;">Click on any step or button on the left for live simulation...</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Interactive SVG Architecture Radar -->
+    <div class="panel" style="margin-bottom: 2rem;">
+      <div class="panel-header">
+        <div class="panel-title">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          ISO/IEC 25010:2023 Systems Architecture
+        </div>
+        <span class="step-pill">9 Quality Axes</span>
+      </div>
+      
+      <div class="radar-wrapper">
+        <svg width="680" height="260" viewBox="0 0 680 260" style="max-width: 100%; height: auto;">
+          <defs>
+            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.8" />
+              <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.8" />
+            </linearGradient>
+            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="6" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          <!-- Nodes & Connections -->
+          <line x1="80" y1="130" x2="220" y2="70" stroke="rgba(99,102,241,0.3)" stroke-width="2" stroke-dasharray="4"/>
+          <line x1="80" y1="130" x2="220" y2="190" stroke="rgba(99,102,241,0.3)" stroke-width="2" stroke-dasharray="4"/>
+          <line x1="220" y1="70" x2="380" y2="70" stroke="rgba(6,182,212,0.5)" stroke-width="2"/>
+          <line x1="220" y1="190" x2="380" y2="190" stroke="rgba(236,72,153,0.5)" stroke-width="2"/>
+          <line x1="380" y1="70" x2="560" y2="130" stroke="rgba(16,185,129,0.5)" stroke-width="2"/>
+          <line x1="380" y1="190" x2="560" y2="130" stroke="rgba(16,185,129,0.5)" stroke-width="2"/>
+
+          <!-- Stage 1 Node -->
+          <circle cx="80" cy="130" r="32" fill="#0f172a" stroke="#06b6d4" stroke-width="3" filter="url(#glow)"/>
+          <text x="80" y="135" fill="#fff" font-size="12" font-weight="700" text-anchor="middle" font-family="'JetBrains Mono'">SPEC</text>
+
+          <!-- Stage 2 Nodes -->
+          <circle cx="220" cy="70" r="28" fill="#0f172a" stroke="#8b5cf6" stroke-width="2.5"/>
+          <text x="220" y="74" fill="#a5b4fc" font-size="10" font-weight="700" text-anchor="middle" font-family="'JetBrains Mono'">REQ (ISO)</text>
+
+          <circle cx="220" cy="190" r="28" fill="#0f172a" stroke="#8b5cf6" stroke-width="2.5"/>
+          <text x="220" y="194" fill="#a5b4fc" font-size="10" font-weight="700" text-anchor="middle" font-family="'JetBrains Mono'">TESTPLAN</text>
+
+          <!-- Stage 3 Nodes -->
+          <circle cx="380" cy="70" r="28" fill="#0f172a" stroke="#ec4899" stroke-width="2.5"/>
+          <text x="380" y="74" fill="#f472b6" font-size="10" font-weight="700" text-anchor="middle" font-family="'JetBrains Mono'">RULES</text>
+
+          <circle cx="380" cy="190" r="28" fill="#0f172a" stroke="#f59e0b" stroke-width="2.5"/>
+          <text x="380" y="194" fill="#fbbf24" font-size="10" font-weight="700" text-anchor="middle" font-family="'JetBrains Mono'">27B CODE</text>
+
+          <!-- Final Node -->
+          <circle cx="560" cy="130" r="38" fill="#0f172a" stroke="#10b981" stroke-width="4" filter="url(#glow)"/>
+          <text x="560" y="135" fill="#34d399" font-size="13" font-weight="800" text-anchor="middle" font-family="'JetBrains Mono'">GATE ✔</text>
+        </svg>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const term = document.getElementById('terminal-content');
+
+    function log(html) {
+      term.innerHTML = html;
+    }
+
+    function runSimulatedGate() {
+      log(`
+        <span class="cmd-prompt">$</span> <span class="cmd-out-accent">aegis</span> gate --profile doc/enterprise.yaml<br><br>
+        <span style="font-weight:700;">Execution Gate — /srv/projects/coding/dev-process</span><br>
+        <span style="color:#94a3b8;">Profile: enterprise (Rigor: enterprise, Language: rust)</span><br><br>
+        ▶ Build<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Build</span><br><br>
+        ▶ Lint<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Lint (cargo clippy -D warnings)</span><br><br>
+        ▶ Tests<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Tests (all 4 unit & integration tests passed)</span><br><br>
+        ▶ Traceability<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Traceability (Chain complete, zero orphaned annotations)</span><br><br>
+        ▶ Issues<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Issues (0 open blockers)</span><br><br>
+        ▶ Deliverables<br>
+        &nbsp;&nbsp;<span class="cmd-out-success">✔ Deliverables (Manifest verified)</span><br><br>
+        <span class="cmd-out-success" style="font-size:1.05rem; font-weight:800;">✔ GATE GREEN — Accepted</span>
+      `);
+    }
+
+    function runTraceSim() {
+      log(`
+        <span class="cmd-prompt">$</span> <span class="cmd-out-accent">aegis</span> trace<br><br>
+        # Traceability Matrix<br><br>
+        | Requirement | Usecases | Tests | Code |<br>
+        |---|---|---|---|<br>
+        | REQ-001 | UC-001 | TEST-001 | 3 location(s) |<br>
+        | REQ-002 | UC-001 | TEST-002 | 1 location(s) |<br>
+        | REQ-003 | UC-002 | TEST-003 | 2 location(s) |<br><br>
+        <span class="cmd-out-success">## No issues found — traceability chain complete.</span>
+      `);
+    }
+
+    function runImpactSim() {
+      log(`
+        <span class="cmd-prompt">$</span> <span class="cmd-out-accent">aegis</span> impact --target REQ-002 --kind bug<br><br>
+        # Impact Analysis<br><br>
+        <span style="color:#93c5fd;">**Kind:**</span> bug &nbsp;&nbsp;<span style="color:#f472b6;">**Impact Depth:**</span> implementation (Test Plan / Code)<br><br>
+        ## Affected Artifacts (Blast Radius)<br>
+        - Requirements: REQ-002<br>
+        - Usecases:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;UC-001<br>
+        - Tests:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TEST-002<br>
+        - Code:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;src/ringbuffer.c:42<br><br>
+        <span class="cmd-out-info">Execution plan generated (Awaiting step-by-step confirmation by lead engineer).</span>
+      `);
+    }
+
+    function runIssueSim() {
+      log(`
+        <span class="cmd-prompt">$</span> <span class="cmd-out-accent">aegis</span> issue list<br><br>
+        ID&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;STATUS&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;SEVERITY&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;STAGE&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TITLE<br>
+        --------------------------------------------------------------------------------<br>
+        <span style="color:#fff;font-weight:700;">ISSUE-0001</span>&nbsp;&nbsp;<span style="color:#34d399;">done</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#f87171;">high</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bug&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;implementation&nbsp;&nbsp;&nbsp;Ring buffer overflow<br>
+        <span style="color:#fff;font-weight:700;">ISSUE-0002</span>&nbsp;&nbsp;<span style="color:#34d399;">done</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#fbbf24;">medium</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;task&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;architecture&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ISO 25010 Safety Axis<br><br>
+        <span class="cmd-out-success">0 open blockers present.</span>
+      `);
+    }
+
+    function showStepDetails(step) {
+      const details = {
+        1: `<strong>01 Ideation:</strong> Collaborative discussion of product scope with Frontier Model A. Produces <code>doc/001_initial_spec.md</code>.`,
+        2: `<strong>02 Derivation:</strong> Model A derives Requirements, Architecture, Use Cases, and the Test Plan BEFORE implementation (Shift-Left).`,
+        3: `<strong>03 Blind Review:</strong> Independent Model B audits spec blind against ISO 25010 to eliminate false assumptions and hallucinations.`,
+        4: `<strong>04 27B Implementation:</strong> Local 27B model receives synthesized instructions and annotates <code>@implements REQ-xxx</code>.`,
+        5: `<strong>05 Gate:</strong> <code>aegis gate</code> executes build, linters, test harnesses, and traceability matrix verification deterministically.`
+      };
+      log(`<span class="cmd-out-accent">${details[step]}</span>`);
+    }
+  </script>
+</body>
+</html>

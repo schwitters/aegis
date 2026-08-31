@@ -1,0 +1,89 @@
+# Profile: Enterprise & Cloud-Native Backend Application
+# No formal safety case. Focus on maintainability, security, observability, and operability.
+
+profile: enterprise
+description: >
+  Server-side, microservice, or enterprise business application. Maintainability,
+  security, compatibility, and operability are paramount; resource budgets are flexible.
+rigor: none            # No formal automotive/safety integrity level
+language: java
+
+# --- Rulesets (Modular Composition) ------------------------------------------
+rulesets:
+  - doc/rules/java-enterprise.yaml
+  - doc/rules/java-google-style.yaml
+  # - doc/rules/cpp20-core.yaml
+
+# --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
+quality_axes:
+  functional_suitability: required
+  security:               required      # Auth, data protection, injection prevention
+  maintainability:        required      # Long-term maintenance, clear modularity
+  compatibility:          required      # REST/gRPC APIs, database schemas, message queues
+  interaction_capability: required      # Usability, accessibility, API ergonomics
+  reliability:            recommended   # High availability, automated recovery, resilience
+  performance_efficiency: recommended   # Latency SLA, p99 metrics, throughput
+  flexibility:            recommended   # Containerization, horizontal scaling
+  safety:                 not_applicable # No physical hazard
+
+# --- 2. Gate Stages ----------------------------------------------------------
+gate:
+  build:
+    active: true
+  lint:
+    active: true
+    standard: language_default     # e.g., checkstyle, spotless, ruff, eslint
+    fail_on: error
+  static_analysis:
+    active: true
+    checks: [type_check, code_smells, spotbugs]
+  security:
+    active: true
+    checks: [dependency_audit, license_scan, sast, secrets_scan]
+    note: Dependency vulnerability and license scans are critical for generated code.
+  tests:
+    active: true
+    levels: [unit, integration, contract]  # API contract testing
+  coverage:
+    active: true
+    metric: branch
+    threshold: 80                  # Pragmatic production threshold
+    fail_below: true
+  load_test:
+    active: true
+    note: Latency and throughput thresholds derived from non-functional requirements.
+  traceability:
+    active: true
+    bidirectional: false           # Forward traceability (REQ -> Test -> Code)
+  deliverables:
+    active: true
+
+# --- 3. Deliverables ---------------------------------------------------------
+deliverables:
+  - container_image              # OCI container image or deployable artifact
+  - deployment_manifest          # Kubernetes Helm chart / compose / Terraform
+  - api_documentation            # OpenAPI 3.0 / AsyncAPI
+  - dependency_license_report
+  - coverage_report
+  - traceability_matrix
+  - readme
+  - changelog
+
+# --- 4. Coding Constraints (Strict Directives for 27B Model) -----------------
+coding_constraints:
+  - Structured JSON logging with correlation IDs; no raw stdout/println statements.
+  - Zero hardcoded secrets in source code; load strictly from environment or secret vault.
+  - All external input must be validated (defense against injection and deserialization attacks).
+  - Explicit error handling with strongly typed domain exceptions; no swallowed errors.
+  - Public APIs must be versioned and backward compatible.
+  - Every @implements annotation must state the REQ-ID of the realized requirement.
+
+# --- 5. Agent Instructions Fragment -----------------------------------------
+agent_instructions: |
+  TARGET PLATFORM: Enterprise Cloud-Native Backend Service.
+  Prioritize maintainability, robust error handling, and security. Write idiomatic,
+  well-structured code with distinct domain boundaries. Validate all external inputs.
+  Use structured JSON logging with correlation IDs. Never hardcode credentials. Keep
+  public interfaces versioned and backward compatible. For every implemented requirement,
+  annotate the code with `@implements REQ-XXX`. Prefer established, well-maintained
+  libraries and document all newly introduced dependencies.

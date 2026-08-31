@@ -1,0 +1,73 @@
+# Ruleset: Rust Safety & Robustness
+# Alignment: Rust API Guidelines, Clippy Pedantic, Memory Invariant Safety
+
+ruleset: rust-safety
+description: >
+  Strict rules for safe, idiomatic, and robust Rust code.
+  Focus on minimal unsafe usage with proof obligations, clean error cascades
+  without panics, and zero-cost abstractions.
+standard: Rust 2021 Edition
+language: rust
+
+linter_config:
+  tool: clippy
+  flags:
+    - "-D"
+    - "warnings"
+    - "-D"
+    - "clippy::undocumented_unsafe_blocks"
+    - "-D"
+    - "clippy::unwrap_used"
+    - "-D"
+    - "clippy::expect_used"
+    - "-D"
+    - "clippy::panic"
+
+rules:
+  - id: RULE-RUST-001
+    title: Mandatory Documentation & Rationale for Unsafe
+    category: memory_safety
+    severity: error
+    instruction: >
+      Every 'unsafe' block must be preceded by a '// SAFETY:' comment explaining
+      formally why invariants (e.g., pointer validity, alignment, non-aliasing)
+      are preserved. In embedded modules, unsafe is strictly confined to hardware register access.
+    rationale: Provides auditable evidence for safety assumptions in code reviews.
+    linter_check: "clippy::undocumented_unsafe_blocks"
+
+  - id: RULE-RUST-002
+    title: Zero unwrap, expect, or panic in Production Paths
+    category: error_handling
+    severity: error
+    instruction: >
+      Never use '.unwrap()', '.expect()', or 'panic!()' in production execution flows.
+      Errors must be propagated using 'Result<T, E>' or 'Option<T>' via the '?' operator or pattern matching.
+    rationale: Prevents uncontrolled thread panics and service downtime.
+    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic"
+
+  - id: RULE-RUST-003
+    title: Explicit, Strongly Typed Domain Errors
+    category: error_handling
+    severity: error
+    instruction: >
+      Public interfaces must expose domain-specific error enums (e.g., via 'thiserror').
+      Avoid opaque 'Box<dyn Error>' or stringly-typed error messages in libraries.
+    rationale: Allows callers to inspect and handle error variants deterministically.
+
+  - id: RULE-RUST-004
+    title: Newtype Pattern for Domain Range Safety
+    category: types
+    severity: warning
+    instruction: >
+      Values carrying specific domain semantics (e.g., Port, TimeoutMs, UserId, Celsius)
+      must be encapsulated as newtypes ('struct Port(u16)') to prevent accidental primitive interchange.
+    rationale: Compile-time type safety with zero runtime overhead (Zero-Cost Abstraction).
+
+  - id: RULE-RUST-005
+    title: Send & Sync Invariant Proofs
+    category: concurrency
+    severity: error
+    instruction: >
+      Manual implementations of 'Send' or 'Sync' are forbidden unless accompanied
+      by an explicit proof of thread safety in a '// SAFETY:' comment.
+    rationale: Prevents data races across thread boundaries.

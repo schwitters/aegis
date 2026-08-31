@@ -1,0 +1,177 @@
+# Ruleset: Google Java Style Guide (Formatting, Naming, Javadoc)
+# Source: https://google.github.io/styleguide/javaguide.html
+
+ruleset: java-google-style
+description: >
+  Formatting, naming, and Javadoc conventions adhering to the Google Java Style Guide.
+  Complements java-enterprise.yaml (architecture, immutability, null-safety) at the style level.
+standard: Google Java Style Guide
+language: java
+
+linter_config:
+  tool: checkstyle (google_checks.xml) + google-java-format
+  config_file: checkstyle.xml
+  flags: ["-Dcheckstyle.config.location=checkstyle.xml"]
+
+rules:
+  - id: RULE-JAVASTYLE-001
+    title: One Top-Level Class per Source File
+    category: design
+    severity: error
+    instruction: >
+      Every Java source file contains exactly one top-level class or interface.
+      The filename must match the class name plus '.java'. Files must be UTF-8 encoded.
+    rationale: Clear one-to-one mapping required by build tools and static analyzers.
+
+  - id: RULE-JAVASTYLE-002
+    title: Zero Wildcard Imports
+    category: design
+    severity: error
+    instruction: >
+      Do not use wildcard ('*') imports, static or non-static. Organize imports into
+      two distinct groups separated by a single blank line (static imports first, then regular),
+      each sorted in ASCII order.
+    rationale: Explicitly identifies referenced classes and avoids ambiguous naming collisions.
+    linter_check: "checkstyle:AvoidStarImport,ImportOrder"
+
+  - id: RULE-JAVASTYLE-003
+    title: Mandatory Braces for Control Structures
+    category: control_flow
+    severity: error
+    instruction: >
+      if, else, for, do, and while statements must always use braces, even for single
+      statements or empty bodies.
+    rationale: Prevents classic dangling-else and refactoring append bugs.
+    linter_check: "checkstyle:NeedBraces"
+
+  - id: RULE-JAVASTYLE-004
+    title: 2-Space Indentation & 100-Column Limit
+    category: style
+    severity: error
+    instruction: >
+      Indent block levels by exactly 2 spaces (no tabs). Column limit is 100 characters,
+      except for package/import lines, URLs in Javadoc, and multiline text blocks.
+      Continuation lines indent by at least +4 spaces.
+    rationale: Uniform formatting eliminates bikeshedding during peer reviews.
+    linter_check: "checkstyle:Indentation,LineLength"
+
+  - id: RULE-JAVASTYLE-005
+    title: One Statement and One Declaration per Line
+    category: style
+    severity: error
+    instruction: >
+      Every statement must end with a newline. Declare exactly one variable per line (except in loop headers).
+    rationale: Simplifies git diffs and prevents overlooked variable declarations.
+    linter_check: "checkstyle:OneStatementPerLine,MultipleVariableDeclarations"
+
+  - id: RULE-JAVASTYLE-006
+    title: Exhaustive Switch & Arrow-Style Switch Expressions
+    category: control_flow
+    severity: error
+    instruction: >
+      Every switch must cover all enum constants or supply an explicit default branch.
+      Switch expressions must use the modern arrow ('->') syntax.
+    rationale: Prevents incomplete state transitions and accidental fallthrough.
+    linter_check: "checkstyle:MissingSwitchDefault,FallThrough"
+
+  - id: RULE-JAVASTYLE-007
+    title: Lowercase Package Names
+    category: naming
+    severity: error
+    instruction: >
+      Package names consist solely of lowercase letters and digits without underscores
+      (e.g., 'deepspace', not 'deep_space' or 'deepSpace').
+    rationale: Consistency with the standard Java platform naming conventions.
+    linter_check: "checkstyle:PackageName"
+
+  - id: RULE-JAVASTYLE-008
+    title: UpperCamelCase Class Names
+    category: naming
+    severity: error
+    instruction: >
+      Class names must be UpperCamelCase nouns or noun phrases. Test classes must end in 'Test'.
+    rationale: Immediate type distinction in source text.
+    linter_check: "checkstyle:TypeName"
+
+  - id: RULE-JAVASTYLE-009
+    title: lowerCamelCase Method and Variable Names
+    category: naming
+    severity: error
+    instruction: >
+      Method names, parameter names, and local variable names must be lowerCamelCase.
+      Avoid single-character parameter names in public APIs.
+    rationale: Clear visual distinction between types, variables, and constants.
+    linter_check: "checkstyle:MethodName,ParameterName,LocalVariableName"
+
+  - id: RULE-JAVASTYLE-010
+    title: UPPER_SNAKE_CASE Reserved for True Constants
+    category: naming
+    severity: error
+    instruction: >
+      UPPER_SNAKE_CASE is strictly reserved for 'static final' fields containing deeply
+      immutable state with no observable side effects. All other fields use lowerCamelCase.
+    rationale: Prevents misleading constant naming on mutable static references.
+    linter_check: "checkstyle:ConstantName"
+
+  - id: RULE-JAVASTYLE-011
+    title: Pure ASCII Identifiers & No Hungarian Prefixes
+    category: naming
+    severity: warning
+    instruction: >
+      Identifiers must contain only ASCII characters. Do not use Hungarian or type
+      prefixes ('mField', 's_var', 'kConstant').
+    rationale: Modern IDE tooltips make Hungarian notation redundant and noisy.
+
+  - id: RULE-JAVASTYLE-012
+    title: Mandatory @Override Annotation
+    category: design
+    severity: error
+    instruction: >
+      Every method overriding a superclass method or implementing an interface method
+      must be annotated with '@Override' where valid.
+    rationale: Compile-time detection of accidental method signature drift.
+    linter_check: "checkstyle:MissingOverride"
+
+  - id: RULE-JAVASTYLE-013
+    title: Never Silently Swallow Caught Exceptions
+    category: error_handling
+    severity: error
+    instruction: >
+      An empty catch block is only permitted with an explicit explanatory comment.
+      Otherwise, log the exception, rethrow as a domain exception, or handle it.
+    rationale: Swallowed exceptions conceal defects and hinder triage.
+    linter_check: "checkstyle:EmptyCatchBlock"
+
+  - id: RULE-JAVASTYLE-014
+    title: Access Static Members Through Class Name
+    category: design
+    severity: warning
+    instruction: >
+      Qualify static members using the class name rather than an instance reference.
+    rationale: Clarifies that the invocation does not depend on instance state.
+
+  - id: RULE-JAVASTYLE-015
+    title: Never Override Object.finalize()
+    category: design
+    severity: error
+    instruction: >
+      Do not override 'finalize()'. Use try-with-resources or java.lang.ref.Cleaner.
+    rationale: Finalizers are non-deterministic, delay garbage collection, and are deprecated.
+
+  - id: RULE-JAVASTYLE-016
+    title: Javadoc for Public Elements
+    category: documentation
+    severity: warning
+    instruction: >
+      Provide Javadoc for public classes and methods. Block tags must appear in the order
+      @param, @return, @throws, @deprecated with non-empty descriptions.
+    rationale: Public interface documentation powers IDE tooltips and API consumers.
+    linter_check: "checkstyle:MissingJavadocMethod,MissingJavadocType,JavadocMethod"
+
+  - id: RULE-JAVASTYLE-017
+    title: Structured TODO Formatting
+    category: documentation
+    severity: warning
+    instruction: >
+      Format TODO comments as '// TODO: [Issue/Link] - [Action item]'.
+    rationale: Unreferenced TODOs become untrackable technical debt over time.

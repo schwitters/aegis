@@ -1,0 +1,84 @@
+# Ruleset: Strict C11 for Safety-Critical & Deterministic Embedded Systems
+# Alignment: MISRA-C:2012, CERT-C, ISO 26262 / IEC 61508
+
+ruleset: c11-embedded-safety
+description: >
+  Strict C11 rules for resource-constrained, deterministic firmware and
+  safety-critical modules. Zero dynamic memory allocation, zero undefined states.
+standard: ISO/IEC 9899:2011 (C11)
+language: c
+
+linter_config:
+  tool: clang-tidy
+  config_file: .clang-tidy
+  flags: ["--warnings-as-errors=*"]
+
+rules:
+  - id: RULE-C11-001
+    title: Zero Dynamic Memory Allocation at Runtime
+    category: memory
+    severity: error
+    instruction: >
+      Do not use malloc, calloc, realloc, free, or alloca. Every buffer
+      must be static or declared with fixed maximum capacity at initialization.
+    rationale: Prevents heap fragmentation, memory leaks, and non-deterministic OOM faults.
+
+  - id: RULE-C11-002
+    title: Fixed-Width Integers
+    category: types
+    severity: error
+    instruction: >
+      Exclusively use <stdint.h> types (uint8_t, int16_t, uint32_t, uint64_t, etc.)
+      and bool from <stdbool.h>. Do not use raw 'int', 'short', 'long', or 'char'
+      for arithmetic values.
+    rationale: Portability and prevention of platform-dependent integer overflow.
+    linter_check: "clang-tidy:google-runtime-int"
+
+  - id: RULE-C11-003
+    title: Zero Recursion
+    category: control_flow
+    severity: error
+    instruction: >
+      Functions must not call themselves directly or indirectly.
+      Use bounded iterative algorithms with explicit state instead.
+    rationale: Enables static determination of maximum stack consumption (WCET / stack analysis).
+    linter_check: "clang-tidy:misc-no-recursion"
+
+  - id: RULE-C11-004
+    title: Explicit Loop Upper Bounds
+    category: control_flow
+    severity: error
+    instruction: >
+      Every loop (while, for, do-while) must have a statically provable or
+      constant upper iteration limit (timeout counter / max iterations).
+    rationale: Prevents infinite stalls during hardware or bus protocol faults.
+
+  - id: RULE-C11-005
+    title: Mandatory Return Value Evaluation
+    category: error_handling
+    severity: error
+    instruction: >
+      Every return value from functions returning status or error codes
+      must be evaluated. Do not cast to (void) to suppress error checks.
+    rationale: Prevents silent execution after failure states.
+    linter_check: "clang-tidy:bugprone-unused-return-value"
+
+  - id: RULE-C11-006
+    title: Exhaustive Switch Statements
+    category: control_flow
+    severity: error
+    instruction: >
+      Every switch statement over an enum must handle all enum variants or include an explicit
+      'default:' branch with fault handling.
+    rationale: Protects against unhandled state transitions.
+    linter_check: "compiler:-Wswitch-enum,-Werror=switch-enum"
+
+  - id: RULE-C11-007
+    title: Zero Implicit Type Promotions
+    category: types
+    severity: error
+    instruction: >
+      Prevent implicit signed/unsigned or narrowing promotions. Use explicit casts
+      and validate range bounds prior to type conversion.
+    rationale: Prevents undetected precision loss and sign bugs.
+    linter_check: "clang-tidy:bugprone-narrowing-conversions"

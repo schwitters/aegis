@@ -1,0 +1,169 @@
+# Ruleset: Strict, Defensive C++ for Production Services
+# Distilled into the RULE-CPPSTRICT schema for review rubrics and gate mapping.
+
+ruleset: cpp-strict
+description: >
+  Strict, defensive C++ for production backend services and CLI applications,
+  aligned with Google C++ Style. Zero exceptions in application core, explicit
+  Result/Status error types, RAII, and CMake+vcpkg.
+standard: Google C++ Style Guide, ISO/IEC 14882 (C++)
+language: cpp
+
+linter_config:
+  tool: clang-tidy + clang-format (Google Style)
+  config_file: .clang-tidy
+  flags: ["--warnings-as-errors=*"]
+
+rules:
+  - id: RULE-CPPSTRICT-001
+    title: Google C++ Style & Expressive Naming
+    category: style
+    severity: error
+    instruction: >
+      Formatting and naming must conform to Google C++ Style (via clang-format).
+      Names must be domain-expressive; avoid cryptic abbreviations. Keep methods small and focused.
+    rationale: Consistent formatting eliminates bikeshedding in code reviews.
+    linter_check: "clang-format:google"
+
+  - id: RULE-CPPSTRICT-002
+    title: Preserve Clean Architecture Boundaries
+    category: design
+    severity: error
+    instruction: >
+      Domain logic remains independent from infrastructure frameworks, databases,
+      file systems, and network stacks. Interfaces must be narrow and mockable for testing.
+    rationale: Prevents external library shifts from infecting core business logic.
+
+  - id: RULE-CPPSTRICT-003
+    title: Zero Exceptions in Core Application Logic
+    category: error_handling
+    severity: error
+    instruction: >
+      Application core logic must not throw C++ exceptions. Propagate failures explicitly
+      via a Result/Status type. Catch third-party exceptions at system boundary adapters
+      and translate them into internal error types.
+    rationale: Deterministic, visible control flow at caller sites.
+
+  - id: RULE-CPPSTRICT-004
+    title: Never Silently Ignore Failures
+    category: error_handling
+    severity: error
+    instruction: >
+      Every Result/Status return must be checked. Validate preconditions early and
+      fail-fast on invalid state rather than continuing in an undefined mode.
+    rationale: Prevents silent state corruption.
+
+  - id: RULE-CPPSTRICT-005
+    title: Comprehensive RAII & Zero Raw new/delete
+    category: resource_management
+    severity: error
+    instruction: >
+      Every resource (memory, files, sockets, locks) must be bound to object lifetimes.
+      Zero raw 'new'/'delete'. Use std::unique_ptr by default; shared ownership only when required.
+    rationale: Prevents resource leaks during error exits.
+    linter_check: "clang-tidy:cppcoreguidelines-owning-memory,cppcoreguidelines-no-malloc"
+
+  - id: RULE-CPPSTRICT-006
+    title: Readable Multiline SQL Formatting
+    category: style
+    severity: error
+    instruction: >
+      Format embedded SQL readably: uppercase keywords, multiline raw string literals,
+      and aligned clauses. Dense single-line SQL is forbidden.
+    rationale: Unreadable embedded SQL cannot be effectively reviewed.
+
+  - id: RULE-CPPSTRICT-007
+    title: Strongest Applicable Domain Types
+    category: types
+    severity: error
+    instruction: >
+      Use std::filesystem::path for paths, std::chrono for durations/timestamps,
+      enum class for states, and <cstdint> fixed-width integers for binary protocols.
+    rationale: Type-driven design prevents misuse at compile time.
+
+  - id: RULE-CPPSTRICT-008
+    title: Narrow APIs with [[nodiscard]]
+    category: design
+    severity: error
+    instruction: >
+      Mark crucial fallible return values and error types with [[nodiscard]].
+      Avoid half-initialized object instances.
+    rationale: Prevents callers from accidentally ignoring return errors.
+    linter_check: "clang-tidy:modernize-use-nodiscard"
+
+  - id: RULE-CPPSTRICT-009
+    title: Consistent CLI Option & ENV Precedence
+    category: design
+    severity: error
+    instruction: >
+      Every significant CLI option must have a matching environment variable with a project prefix.
+      Precedence: Built-in defaults < Config file < Environment variables < CLI flags.
+    rationale: Predictable configuration across development, CI, and production environments.
+
+  - id: RULE-CPPSTRICT-010
+    title: Centralized Observability & Zero Secrets in Logs
+    category: observability
+    severity: error
+    instruction: >
+      Route logs through a centralized logging wrapper. Log messages must be in English.
+      Never log credentials, tokens, or sensitive payload attributes.
+    rationale: Protects against data breaches and credential leakage in log aggregation systems.
+
+  - id: RULE-CPPSTRICT-011
+    title: Unit & Smoke Tests Covering Error Paths
+    category: testing
+    severity: error
+    instruction: >
+      Every module requires unit tests covering both success and error branches.
+      Verify configuration parsing and edge boundary conditions.
+    rationale: Untested error branches harbor the majority of production regressions.
+
+  - id: RULE-CPPSTRICT-012
+    title: Clean Warning-Free Builds
+    category: build
+    severity: error
+    instruction: >
+      Builds must compile cleanly without warnings. Never globally suppress warnings
+      without recorded architectural justification.
+    rationale: Compiler warnings detect genuine runtime vulnerabilities.
+
+  - id: RULE-CPPSTRICT-013
+    title: Single Unified Build System (CMake + vcpkg)
+    category: build
+    severity: error
+    instruction: >
+      Use CMake as the primary build definition with vcpkg dependency management.
+    rationale: Duplicate build systems double maintenance overhead without architectural benefit.
+
+  - id: RULE-CPPSTRICT-014
+    title: Defensive Input Validation
+    category: security
+    severity: error
+    instruction: >
+      Validate files, network payloads, environment variables, and user input before consumption.
+      Sanitize subprocess invocations and temporary file paths.
+    rationale: Direct defense against injection and path traversal attacks.
+
+  - id: RULE-CPPSTRICT-015
+    title: Zero Magic Numbers
+    category: style
+    severity: error
+    instruction: >
+      Replace unexplained numeric literals with named constexpr constants or scoped enums.
+    rationale: Self-documenting code simplifies future parameter adjustments.
+
+  - id: RULE-CPPSTRICT-016
+    title: Zero Unmanaged Global Mutable State
+    category: design
+    severity: error
+    instruction: >
+      Avoid global mutable state. Where unavoidable, encapsulate access strictly behind a thread-safe singleton.
+    rationale: Unmanaged global state breaks test isolation and introduces race conditions.
+
+  - id: RULE-CPPSTRICT-017
+    title: Minimal, Scoped Changes
+    category: design
+    severity: error
+    instruction: >
+      Keep edits tightly scoped to the immediate requirement. Avoid speculative refactorings.
+    rationale: Controls blast radius and simplifies peer review.

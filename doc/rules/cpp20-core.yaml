@@ -1,0 +1,64 @@
+# Ruleset: Modern C++ (C++20 Core Guidelines)
+# Alignment: C++ Core Guidelines, AUTOSAR C++14 / MISRA C++2023, RAII
+
+ruleset: cpp20-core
+description: >
+  Modern, type-safe C++20 guidelines. Focus on RAII, smart pointers, concepts,
+  zero raw pointer ownership, and deterministic resource management.
+standard: ISO/IEC 14882:2020 (C++20)
+language: cpp
+
+linter_config:
+  tool: clang-tidy
+  config_file: .clang-tidy
+  flags: ["--warnings-as-errors=*"]
+
+rules:
+  - id: RULE-CPP-001
+    title: RAII for All Resources
+    category: memory
+    severity: error
+    instruction: >
+      Every resource (memory, files, sockets, locks) must be bound to the lifetime
+      of an object (RAII). Never use raw 'new' or 'delete'.
+    rationale: Eliminates resource and memory leaks during normal and exceptional control flows.
+    linter_check: "clang-tidy:cppcoreguidelines-owning-memory"
+
+  - id: RULE-CPP-002
+    title: Explicit Ownership (Smart Pointers / std::span / std::string_view)
+    category: design
+    severity: error
+    instruction: >
+      Raw pointers ('T*') and references ('T&') must be strictly non-owning.
+      For exclusive ownership, use 'std::unique_ptr<T>'; for shared ownership, use 'std::shared_ptr<T>'.
+      Prefer 'std::span<T>' for contiguous sequence parameters and 'std::string_view' for read-only strings.
+    rationale: Clean separation of resource ownership and observational access.
+    linter_check: "clang-tidy:cppcoreguidelines-owning-memory"
+
+  - id: RULE-CPP-003
+    title: Concepts Over Unconstrained Templates
+    category: types
+    severity: warning
+    instruction: >
+      Every template must be constrained by a C++20 concept (e.g., std::integral, std::invocable,
+      or domain concepts) to validate interface contracts formally.
+    rationale: Clear compiler error diagnostics and strict interface enforcement at compile time.
+
+  - id: RULE-CPP-004
+    title: Const-Correctness & Noexcept Specification
+    category: design
+    severity: error
+    instruction: >
+      Declare variables and member functions 'const' by default. Move operators,
+      destructors, and functions guaranteed not to throw must be marked 'noexcept'.
+    rationale: Enables compiler optimizations and prevents uncatchable std::terminate cascades.
+    linter_check: "clang-tidy:readability-make-member-function-const,performance-noexcept-move-constructor"
+
+  - id: RULE-CPP-005
+    title: Prefer Explicit Result Types Over Exceptions in Performance Paths
+    category: error_handling
+    severity: warning
+    instruction: >
+      For regular, expected error conditions (e.g. parsing, validation), use
+      std::optional or a strongly typed result/status type. Reserve exceptions for truly unexpected conditions.
+    rationale: Deterministic runtime latency and explicit error contracts in function signatures.
