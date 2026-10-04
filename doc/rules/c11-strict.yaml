@@ -1,7 +1,14 @@
 # Ruleset: Strict, Defensive C11 for Production Backends & Systems
-# Distilled into the RULE-C11 schema for review rubrics and automated gate mapping.
+# Schema v2 — backward compatible with the v1 parser (RuleItem / RulesetFile):
+#   * all v1 fields (id, title, category, severity, instruction, rationale, linter_check) are kept
+#   * new fields (legacy_id, enforcement, checks, deviation, example_bad, example_good,
+#     toolchain, deviation_policy, ...) are ignored by the v1 parser until it is extended.
+#
+# For safety-certified firmware use c11-embedded-safety.yaml (extends this ruleset).
 
 ruleset: c11-strict
+schema_version: 2
+id_prefix: RULE-C11S          # namespaced IDs: no collision with RULE-C11E-* (embedded)
 description: >
   Strict, defensive C11 for general production software (services, backends, CLI tools).
   Focus on explicit error propagation, memory and resource safety, clean platform boundaries,
@@ -9,174 +16,597 @@ description: >
 standard: ISO/IEC 9899:2011 (C11)
 language: c
 
-linter_config:
-  tool: clang-tidy
-  config_file: .clang-tidy
-  flags: ["-Wall", "-Wextra", "-pedantic", "-std=c11"]
+# -----------------------------------------------------------------------------
+# Toolchain: what the gate actually runs. Compiler flags and linter flags are
+# kept separate so every tool receives only options it understands.
+# -----------------------------------------------------------------------------
+toolchain:
+  compiler:
+    flags:
+      - -std=c11
+      - -Wall
+      - -Wextra
+      - -Wpedantic
+      - -Werror                              # warnings are fail-closed (RULE-C11S-017)
+      - -Wconversion                         # RULE-C11S-006
+      - -Wsign-conversion                    # RULE-C11S-006
+      - -Wshadow
+      - -Wformat=2                           # RULE-C11S-021
+      - -Wvla                                # RULE-C11S-020
+      - -Wstrict-prototypes                  # RULE-C11S-016
+      - -Wmissing-prototypes                 # RULE-C11S-016
+      - -Werror=implicit-function-declaration  # RULE-C11S-016
+      - -Wcast-qual                          # RULE-C11S-014
+      - -Wundef
+      - -Wnull-dereference
+
+  clang_tidy:
+    config_file: .clang-tidy                 # must enable every clang-tidy check referenced below
+    flags: ["--warnings-as-errors=*"]
+
+  cppcheck:
+    flags:
+      - --std=c11
+      - --enable=warning,style,performance,portability
+      - --error-exitcode=1
+      - --inline-suppr                       # suppressions only together with AEGIS-DEVIATION
+      - --check-level=exhaustive             # cppcheck >= 2.11
+
+  sanitizer_builds:                          # RULE-C11S-019; ASan and TSan cannot be combined
+    - name: asan-ubsan
+      required: always
+      cflags: [-fsanitize=address,undefined, -fno-sanitize-recover=all, -fno-omit-frame-pointer, -g, -O1]
+      env:
+        ASAN_OPTIONS: "detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1"
+        UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+    - name: tsan
+      required: when_threads                 # mandatory as soon as the code creates threads
+      cflags: [-fsanitize=thread, -g, -O1]
+      env:
+        TSAN_OPTIONS: "halt_on_error=1"
+
+  project_header:                            # one header included by every translation unit
+    path: include/aegis_c11.h
+    provides:
+      - "AEGIS_NODISCARD    -> __attribute__((warn_unused_result))"
+      - "AEGIS_IGNORE_RESULT(expr) -> ((void)!(expr))  /* also silences GCC, only with deviation marker */"
+      - "AEGIS_PRINTF(fmt_idx, args_idx) -> __attribute__((format(printf, fmt_idx, args_idx)))"
+      - "#pragma GCC poison strcpy strcat sprintf vsprintf gets strncpy strncat   /* after system includes */"
+
+# -----------------------------------------------------------------------------
+# Deviation policy: the only legal way to break a rule marked `deviation: permitted`.
+# -----------------------------------------------------------------------------
+deviation_policy:
+  marker: "/* AEGIS-DEVIATION(<RULE-ID>): <justification> */"
+  placement: on the line directly above the deviating statement
+  gate_checks:
+    - every marker references an existing rule ID whose deviation field is 'permitted'
+    - every marker has a non-empty justification
+    - every NOLINT, cppcheck-suppress and AEGIS_IGNORE_RESULT sits directly below a marker
+    - rules with 'deviation: forbidden' cannot be suppressed at all
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+# -----------------------------------------------------------------------------
+# Field reference (v2):
+#   legacy_id     v1 ID for migrating existing review findings / issues
+#   enforcement   gate | review | gate+review
+#   checks        machine checks; tool in {compiler, clang-tidy, cppcheck, sanitizer, gate-script}
+#   linter_check  v1 compatibility string (comma separated, mirrors `checks`)
+#   deviation     permitted | forbidden
+#   example_bad / example_good   short snippets rendered into AGENT_INSTRUCTIONS.md
+# -----------------------------------------------------------------------------
 
 rules:
-  - id: RULE-C11-001
+  - id: RULE-C11S-001
+    legacy_id: RULE-C11-001
     title: Explicit, Status-Based Error Handling
     category: error_handling
     severity: error
+    enforcement: review
+    deviation: forbidden
     instruction: >
-      Every fallible function must return an explicit status, result, or error code.
-      No hidden non-local jumps (setjmp/longjmp). Validate preconditions early and fail-fast.
-    rationale: Makes error propagation visible and verifiable at caller sites.
+      Every fallible function returns an explicit status code (project enum status_t) and
+      delivers results through out-parameters. Do not encode errors in otherwise valid values
+      (0, -1, NULL) when the caller cannot distinguish them from success. No setjmp/longjmp.
+      Validate preconditions at the top of the function and return early on violation.
+    rationale: Makes error propagation visible and verifiable at every call site.
+    example_bad: |
+      int parse_port(const char *s) {
+          return atoi(s);   /* "abc" and "0" both yield 0; overflow is UB */
+      }
+    example_good: |
+      AEGIS_NODISCARD status_t parse_port(const char *s, uint16_t *out) {
+          if (s == NULL || out == NULL) { return ST_EINVAL; }
+          char *end = NULL;
+          errno = 0;
+          const long v = strtol(s, &end, 10);
+          if (errno != 0 || end == s || *end != '\0') { return ST_EINVAL; }
+          if (v < 0 || v > UINT16_MAX) { return ST_ERANGE; }
+          *out = (uint16_t)v;
+          return ST_OK;
+      }
 
-  - id: RULE-C11-002
+  - id: RULE-C11S-002
+    legacy_id: RULE-C11-002
     title: Never Silently Ignore Return Values
     category: error_handling
     severity: error
+    enforcement: gate+review
+    deviation: permitted
     instruction: >
-      Every return value of a fallible function must be evaluated. Casting to (void)
-      to suppress error inspection is forbidden.
-    rationale: Prevents silent continuation in corrupted system states.
-    linter_check: "clang-tidy:bugprone-unused-return-value"
+      Declare every fallible project function with AEGIS_NODISCARD. Evaluate every return value
+      of fallible functions, including C library calls such as fclose, fflush, snprintf and write.
+      A bare (void) cast is forbidden. If a failure genuinely has no possible reaction, use
+      AEGIS_IGNORE_RESULT(expr) directly below an AEGIS-DEVIATION marker that explains why.
+    rationale: >
+      Prevents silent continuation in corrupted states. bugprone-unused-return-value only covers
+      a configured function list, so project functions are enforced via warn_unused_result.
+    checks:
+      - { tool: compiler,    check: "-Werror=unused-result (via AEGIS_NODISCARD)" }
+      - { tool: clang-tidy,  check: cert-err33-c }
+      - { tool: clang-tidy,  check: bugprone-unused-return-value }
+      - { tool: gate-script, check: "reject '(void)' casts of call expressions outside AEGIS_IGNORE_RESULT" }
+    linter_check: "compiler:-Werror=unused-result,clang-tidy:cert-err33-c,clang-tidy:bugprone-unused-return-value"
+    example_bad: |
+      (void)fflush(out);
+      write_config(cfg);
+    example_good: |
+      AEGIS_NODISCARD status_t write_config(const config_t *cfg);
 
-  - id: RULE-C11-003
+      const status_t st = write_config(cfg);
+      if (st != ST_OK) { return st; }
+
+      /* AEGIS-DEVIATION(RULE-C11S-002): input stream opened read-only, close failure has no recovery */
+      AEGIS_IGNORE_RESULT(fclose(in));
+
+  - id: RULE-C11S-003
+    legacy_id: RULE-C11-003
     title: Preserve errno Immediately After Failure
     category: error_handling
     severity: error
+    enforcement: review
+    deviation: forbidden
     instruction: >
-      Copy errno (or GetLastError() on Windows) into a local variable immediately
-      after a failed call before any other call (including logging) can overwrite it.
-    rationale: Any subsequent runtime/system call will overwrite errno.
+      Copy errno into a const local variable in the first statement after detecting a failed call,
+      before any other call (including logging). Use only the copy afterwards. Set errno = 0 before
+      calls whose failure can only be detected through errno (strtol, strtoul, ...).
+    rationale: Any subsequent library or system call may overwrite errno.
+    checks:
+      - { tool: clang-tidy, check: "clang-analyzer errno checker (unix.Errno or alpha.unix.Errno, depending on Clang version)" }
+    example_bad: |
+      const int fd = open(path, O_RDONLY);
+      if (fd < 0) {
+          log_error("open failed: %s", path);   /* may clobber errno */
+          return status_from_errno(errno);
+      }
+    example_good: |
+      const int fd = open(path, O_RDONLY);
+      if (fd < 0) {
+          const int err = errno;
+          log_error("open failed: %s (errno %d)", path, err);
+          return status_from_errno(err);
+      }
 
-  - id: RULE-C11-004
+  - id: RULE-C11S-004
+    legacy_id: RULE-C11-004
     title: Async-Signal-Safe Signal Handlers Only
     category: concurrency
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Signal handlers must only invoke async-signal-safe functions. Zero allocations,
-      zero I/O logging in signal handlers. Communicate with main loop via volatile sig_atomic_t
-      or a self-pipe.
+      A signal handler may only write to a volatile sig_atomic_t (or lock-free atomic) flag or
+      write() to a self-pipe. No allocation, no logging, no stdio, no locks. All real work happens
+      in the main loop after it observes the flag.
     rationale: Non-async-signal-safe calls inside handlers cause deadlocks and undefined behavior.
+    checks:
+      - { tool: clang-tidy, check: bugprone-signal-handler }
+    linter_check: "clang-tidy:bugprone-signal-handler"
+    example_bad: |
+      static void on_term(int sig) {
+          log_info("got signal %d", sig);   /* stdio + locks inside handler */
+          shutdown_server();
+      }
+    example_good: |
+      static volatile sig_atomic_t g_stop_requested = 0;
 
-  - id: RULE-C11-005
+      static void on_term(int sig) {
+          (void)sig;   /* unused parameter, not a call: permitted */
+          g_stop_requested = 1;
+      }
+      /* main loop: if (g_stop_requested) { shutdown_server(); } */
+
+  - id: RULE-C11S-005
+    legacy_id: RULE-C11-005
     title: Overflow-Checked Allocation Arithmetic
     category: memory
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Allocation sizes must be computed with overflow checks. Never perform unchecked
-      malloc(n * size); use checked multiplication or explicit precondition bounds.
-    rationale: Integer overflow in allocation size leads to heap buffer overflow.
+      Compute every allocation size with __builtin_mul_overflow / __builtin_add_overflow (or an
+      explicit precondition bound) before calling malloc or realloc. Check every allocation result
+      for NULL. Never write p = realloc(p, n); assign to a temporary first so the original block is
+      not leaked on failure.
+    rationale: Integer overflow in an allocation size turns into a heap buffer overflow.
+    checks:
+      - { tool: clang-tidy, check: bugprone-implicit-widening-of-multiplication-result }
+      - { tool: clang-tidy, check: bugprone-misplaced-widening-cast }
+      - { tool: sanitizer,  check: "ASan heap-buffer-overflow in tests with large counts" }
+    linter_check: "clang-tidy:bugprone-implicit-widening-of-multiplication-result,clang-tidy:bugprone-misplaced-widening-cast"
+    example_bad: |
+      item_t *items = malloc(count * sizeof *items);
+      items = realloc(items, new_count * sizeof *items);
+    example_good: |
+      size_t bytes = 0;
+      if (__builtin_mul_overflow(count, sizeof(item_t), &bytes)) { return ST_ERANGE; }
+      item_t *items = malloc(bytes);
+      if (items == NULL) { return ST_ENOMEM; }
 
-  - id: RULE-C11-006
-    title: Explicit, Range-Checked Boundary Conversions
+      item_t *grown = realloc(items, new_bytes);
+      if (grown == NULL) { free(items); return ST_ENOMEM; }
+      items = grown;
+
+  - id: RULE-C11S-006
+    legacy_id: RULE-C11-006
+    title: Explicit, Range-Checked Conversions
     category: types
     severity: error
+    enforcement: gate+review
+    deviation: permitted
     instruction: >
-      Narrowing and sign conversions across system boundaries must be explicit and checked
-      (e.g., ssize_t return from read/write prior to size_t assignment).
-    rationale: Prevents off-by-bounds and integer wraparound exploits.
-    linter_check: "clang-tidy:bugprone-narrowing-conversions"
+      Every narrowing or sign-changing conversion is an explicit cast placed directly after a range
+      check that proves it is lossless. Typical case: check ssize_t results of read/write/recv for
+      < 0 before converting to size_t. Do not add casts merely to silence -Wconversion without the
+      preceding check.
+    rationale: Implicit truncation and sign changes cause out-of-bounds accesses and wraparound bugs.
+    checks:
+      - { tool: compiler,   check: "-Wconversion -Wsign-conversion" }
+      - { tool: clang-tidy, check: bugprone-narrowing-conversions }
+    linter_check: "compiler:-Wconversion,compiler:-Wsign-conversion,clang-tidy:bugprone-narrowing-conversions"
+    example_bad: |
+      size_t n = read(fd, buf, sizeof buf);   /* -1 becomes SIZE_MAX */
+    example_good: |
+      const ssize_t r = read(fd, buf, sizeof buf);
+      if (r < 0) {
+          const int err = errno;
+          return status_from_errno(err);
+      }
+      const size_t n = (size_t)r;   /* lossless: r >= 0 checked above */
 
-  - id: RULE-C11-007
-    title: Zero Insecure C-String Functions
+  - id: RULE-C11S-007
+    legacy_id: RULE-C11-007
+    title: No Unbounded or Truncating C-String Functions
     category: memory_safety
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Do not use strcpy, strcat, sprintf, or gets. Use bounded alternatives such as
-      snprintf. Every buffer write must be size-aware; every string operation must be length-aware.
-    rationale: Classic cause of buffer overflow vulnerabilities.
-    linter_check: "clang-tidy:clang-analyzer-security.insecureAPI.strcpy,cert-msc24-c"
+      Forbidden: strcpy, strcat, sprintf, vsprintf, gets, strncpy, strncat (strncpy does not
+      guarantee NUL termination). Use snprintf or memcpy with an explicit, checked length.
+      Always check snprintf's return value: negative means error, a value >= buffer size means
+      truncation and must be handled as an error unless truncation is part of the specification.
+    rationale: Classic source of buffer overflows and silent truncation bugs.
+    checks:
+      - { tool: compiler,   check: "#pragma GCC poison in include/aegis_c11.h" }
+      - { tool: clang-tidy, check: clang-analyzer-security.insecureAPI.strcpy }
+      - { tool: clang-tidy, check: cert-msc24-c }
+    linter_check: "compiler:pragma-poison,clang-tidy:clang-analyzer-security.insecureAPI.strcpy,clang-tidy:cert-msc24-c"
+    example_bad: |
+      strncpy(dst, src, sizeof dst);                    /* may leave dst unterminated */
+      snprintf(path, sizeof path, "%s/%s", dir, name);  /* truncation ignored */
+    example_good: |
+      const int w = snprintf(path, sizeof path, "%s/%s", dir, name);
+      if (w < 0 || (size_t)w >= sizeof path) { return ST_ETRUNC; }
 
-  - id: RULE-C11-008
+  - id: RULE-C11S-008
+    legacy_id: RULE-C11-008
     title: assert Reserved Strictly for Programmer Invariants
     category: defensive_programming
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Use assert only for unreachable invariant violations. Never use assert to validate
-      external inputs, network payloads, or runtime errors that must be handled in release builds.
-    rationale: assert is stripped in NDEBUG builds.
+      Use assert only for conditions that can be false solely through a bug in this code base
+      (internal invariants, documented non-null contracts between own modules). Everything that
+      depends on external input, files, network data, configuration or resource availability is
+      checked with a runtime check that returns a status. assert expressions must not have side effects.
+    rationale: assert is removed in NDEBUG builds; side effects in assert change release behavior.
+    checks:
+      - { tool: clang-tidy, check: bugprone-assert-side-effect }
+    linter_check: "clang-tidy:bugprone-assert-side-effect"
+    example_bad: |
+      assert(hdr->len <= MAX_PAYLOAD);   /* hdr comes from the network */
+    example_good: |
+      if (hdr->len > MAX_PAYLOAD) { return ST_EPROTO; }
+      /* internal invariant, established by ring_init(): */
+      assert(ring->cap > 0);
 
-  - id: RULE-C11-009
-    title: Structured Resource Cleanup Pattern
+  - id: RULE-C11S-009
+    legacy_id: RULE-C11-009
+    title: Single Structured Cleanup Path
     category: resource_management
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Every acquired resource (memory, file descriptor, socket, lock) must have a single
-      predictable cleanup path (e.g. goto cleanup single-exit pattern) rather than scattered returns.
-    rationale: Scattered return paths are the primary cause of resource leaks during error handling.
+      A function that acquires more than one resource (memory, file, socket, lock) initializes all
+      handles to NULL / -1 at the top, jumps forward to a single 'cleanup:' label on error, and
+      releases everything there in reverse order. Only forward gotos to cleanup labels are allowed.
+      When ownership is transferred to the caller, set the local handle to NULL before cleanup.
+    rationale: Scattered return paths are the primary cause of resource leaks on error paths.
+    checks:
+      - { tool: sanitizer, check: "LeakSanitizer (part of asan-ubsan build) on all error-path tests" }
+      - { tool: cppcheck,  check: "memleak, resourceLeak" }
+    linter_check: "sanitizer:leak,cppcheck:memleak,cppcheck:resourceLeak"
+    example_bad: |
+      FILE *fp = fopen(path, "rb");
+      if (fp == NULL) { return ST_EIO; }
+      uint8_t *data = malloc(BUF_CAP);
+      if (data == NULL) { return ST_ENOMEM; }   /* leaks fp */
+    example_good: |
+      status_t st = ST_OK;
+      FILE *fp = NULL;
+      uint8_t *data = NULL;
 
-  - id: RULE-C11-010
-    title: Zero Unchecked Pointer Arithmetic
+      fp = fopen(path, "rb");
+      if (fp == NULL) { st = ST_EIO; goto cleanup; }
+      data = malloc(BUF_CAP);
+      if (data == NULL) { st = ST_ENOMEM; goto cleanup; }
+      /* ... fill data ... */
+      out->data = data;
+      data = NULL;   /* ownership transferred */
+
+      cleanup:
+      free(data);
+      if (fp != NULL && fclose(fp) != 0 && st == ST_OK) { st = ST_EIO; }
+      return st;
+
+  - id: RULE-C11S-010
+    legacy_id: RULE-C11-010
+    title: Explicit Pointer Contracts and Bounds Checks
     category: memory_safety
     severity: error
+    enforcement: review
+    deviation: forbidden
     instruction: >
-      Pointer arithmetic without boundary verification is forbidden. Pointers must be verified
-      against NULL prior to dereference where nullable.
-    rationale: Unchecked pointer math directly causes out-of-bounds memory accesses.
+      Every pointer parameter's contract is documented in the declaration comment: non-null or
+      nullable, and who owns it. Public API functions check non-null parameters at runtime and
+      return ST_EINVAL; internal functions may assert() documented non-null contracts instead.
+      Do not scatter redundant NULL checks. Before pointer arithmetic or indexed access, check the
+      offset against the buffer capacity using subtraction (n > cap - off) so the check itself
+      cannot overflow. Do not use __attribute__((nonnull)): it allows the compiler to delete NULL checks.
+    rationale: Unchecked offsets cause out-of-bounds accesses; vague contracts cause both missing and dead checks.
+    example_bad: |
+      memcpy(buf->data + off, src, n);   /* no bound check */
+      if (off + n > buf->cap) { ... }    /* the check itself can wrap around */
+    example_good: |
+      /* buf: non-null, caller-owned. src: non-null if n > 0. */
+      AEGIS_NODISCARD status_t buf_write(buf_t *buf, size_t off, const void *src, size_t n) {
+          if (buf == NULL || (src == NULL && n > 0)) { return ST_EINVAL; }
+          if (off > buf->cap || n > buf->cap - off) { return ST_ERANGE; }
+          if (n > 0) { memcpy(buf->data + off, src, n); }
+          return ST_OK;
+      }
 
-  - id: RULE-C11-011
+  - id: RULE-C11S-011
+    legacy_id: RULE-C11-011
     title: Isolate Platform Code by Translation Unit, Not Scattered #ifdef
     category: design
     severity: error
+    enforcement: review
+    deviation: permitted
     instruction: >
-      Isolate platform-specific logic into dedicated files (_posix.c, _win.c) selected by the
-      build system. Keep platform types hidden behind opaque handles.
-    rationale: Scattered #ifdef directives make code unreadable and untestable.
+      Platform-specific code lives in dedicated files (<module>_posix.c, <module>_win.c) selected by
+      the build system. Platform types are hidden behind opaque handles declared in a portable header.
+      #ifdef for platform selection is allowed only in the build system and in the project header.
+    rationale: Scattered #ifdef blocks make code unreadable and leave untested combinations.
+    example_bad: |
+      uint64_t now_ms(void) {
+      #ifdef _WIN32
+          return GetTickCount64();
+      #else
+          struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); ...
+      #endif
+      }
+    example_good: |
+      /* platform_time.h  : AEGIS_NODISCARD status_t platform_now_ms(uint64_t *out); */
+      /* platform_time_posix.c / platform_time_win.c implement it; CMake selects one */
 
-  - id: RULE-C11-012
-    title: Zero Shared Mutable State Without Formal Synchronization
+  - id: RULE-C11S-012
+    legacy_id: RULE-C11-012
+    title: No Shared Mutable State Without Formal Synchronization
     category: concurrency
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Avoid shared mutable state where possible. Use <stdatomic.h> for lock-free counters/flags.
-      For non-trivial structures, enforce access via a mutex encapsulated in a module abstraction.
-    rationale: Prevents data races and deadlocks.
+      Avoid shared mutable state. Use <stdatomic.h> for counters and flags, with an explicitly
+      chosen memory order. Non-trivial shared structures are accessible only through a module API
+      that encapsulates the mutex; never expose the lock or the raw structure.
+    rationale: Data races are undefined behavior in C11 and rarely reproduce in tests.
+    checks:
+      - { tool: sanitizer, check: "tsan build mandatory as soon as threads are used" }
+    linter_check: "sanitizer:thread"
+    example_bad: |
+      static size_t g_requests;
+      void on_request(void) { g_requests++; }   /* called from worker threads */
+    example_good: |
+      static atomic_size_t g_requests;
+      void on_request(void) {
+          atomic_fetch_add_explicit(&g_requests, 1, memory_order_relaxed);
+      }
 
-  - id: RULE-C11-013
+  - id: RULE-C11S-013
+    legacy_id: RULE-C11-013
     title: Centralized Logging Abstraction & Zero Secrets in Logs
     category: observability
     severity: error
+    enforcement: gate+review
+    deviation: permitted
     instruction: >
-      Route all logging through a centralized logging interface. Never log credentials,
-      tokens, or sensitive payload data.
-    rationale: Leaking credentials in log files violates security and compliance standards.
+      All diagnostic output goes through the project logging module (log_error, log_warn, log_info,
+      log_debug). Direct printf/fprintf to stdout/stderr is allowed only in the logging module and in
+      the CLI output module. Never log credentials, tokens, keys or raw payloads containing personal data.
+    rationale: Uncontrolled output leaks secrets and cannot be filtered, rotated or structured.
+    checks:
+      - { tool: gate-script, check: "grep for printf/fprintf/puts outside the allowed modules" }
+    example_bad: |
+      fprintf(stderr, "login %s:%s failed\n", user, password);
+    example_good: |
+      log_warn("login failed user=%s", user);
 
-  - id: RULE-C11-014
+  - id: RULE-C11S-014
+    legacy_id: RULE-C11-014
     title: Strongest Applicable Types & Const-Correctness
     category: types
     severity: error
+    enforcement: gate+review
+    deviation: permitted
     instruction: >
-      Use <stdint.h> fixed-width integers, size_t for lengths, and bool for boolean states.
-      Mark read-only pointer parameters and constant tables as const (and static where file-local).
-    rationale: Const-correctness enforces API contracts at compile time.
+      Use size_t for sizes, lengths and indices; <stdint.h> fixed-width types where the width matters
+      (protocols, file formats, hashes); bool for boolean states; char only for characters and text.
+      Mark read-only pointer parameters and constant tables const, file-local functions and data static.
+      Never cast away const.
+    rationale: Precise types and const-correctness turn API contracts into compile-time checks.
+    checks:
+      - { tool: compiler,   check: "-Wcast-qual" }
+      - { tool: clang-tidy, check: readability-non-const-parameter }
+      - { tool: compiler,   check: "-Wmissing-prototypes (non-static functions without declaration)" }
+    linter_check: "compiler:-Wcast-qual,clang-tidy:readability-non-const-parameter"
+    example_bad: |
+      int copy_name(char *dst, char *src, int len);
+    example_good: |
+      AEGIS_NODISCARD status_t copy_name(char *dst, size_t dst_size, const char *src, size_t src_len);
 
-  - id: RULE-C11-015
+  - id: RULE-C11S-015
+    legacy_id: RULE-C11-015
     title: Self-Contained Headers with Declarations Only
     category: design
     severity: error
+    enforcement: gate
+    deviation: forbidden
     instruction: >
-      Every header must compile in isolation. Headers declare interfaces; translation units
-      define them. Use consistent include guards.
-    rationale: Prevents brittle include-order dependencies.
+      Every header compiles on its own: it includes everything it uses (stddef.h for size_t, stdint.h,
+      stdbool.h, ...). Headers contain declarations, types and macros only; no function or object
+      definitions except static inline functions. Include guards follow PROJECT_PATH_FILE_H.
+    rationale: Prevents include-order dependencies and multiple-definition link errors.
+    checks:
+      - { tool: gate-script, check: "for h in include/*.h: printf '#include \"%s\"\\n' \"$h\" | cc -std=c11 -Iinclude -fsyntax-only -x c -" }
+    linter_check: "gate-script:header-self-containment"
+    example_good: |
+      #ifndef MYPROJ_NET_BUF_H
+      #define MYPROJ_NET_BUF_H
 
-  - id: RULE-C11-016
-    title: Zero Speculative or Guessed API Signatures
+      #include <stddef.h>
+      #include <stdint.h>
+      #include "myproj/status.h"
+
+      typedef struct buf buf_t;   /* opaque */
+      AEGIS_NODISCARD status_t buf_write(buf_t *buf, size_t off, const void *src, size_t n);
+
+      #endif /* MYPROJ_NET_BUF_H */
+
+  - id: RULE-C11S-016
+    legacy_id: RULE-C11-016
+    title: No Guessed API Signatures
     category: defensive_programming
     severity: error
+    enforcement: gate
+    deviation: forbidden
     instruction: >
-      When using third-party or system APIs, consult header declarations and documentation
-      rather than guessing signatures.
-    rationale: Guessing signatures causes type mismatches and undefined behavior.
+      Call only functions whose declaration is visible through an explicit #include. If you are not
+      sure about a library function's signature or semantics, read its header or man page in the
+      repository environment, or ask; do not guess. Every non-static function has a prototype in a header.
+    rationale: Guessed signatures cause type mismatches and undefined behavior; the compiler can enforce visibility.
+    checks:
+      - { tool: compiler, check: "-Werror=implicit-function-declaration -Wstrict-prototypes -Wmissing-prototypes" }
+    linter_check: "compiler:-Werror=implicit-function-declaration,compiler:-Wstrict-prototypes,compiler:-Wmissing-prototypes"
 
-  - id: RULE-C11-017
-    title: Clean Compiler Warnings Without Global Suppression
+  - id: RULE-C11S-017
+    legacy_id: RULE-C11-017
+    title: Zero Warnings, No Global Suppression
     category: build
     severity: error
+    enforcement: gate
+    deviation: forbidden
     instruction: >
-      Code must compile cleanly without warnings under -Wall -Wextra -pedantic -std=c11.
-    rationale: Compiler warnings reveal fundamental defect classes prior to runtime testing.
-    linter_check: "compiler:-Wall,-Wextra,-pedantic"
+      Code compiles without warnings with the full toolchain.compiler.flags set, which includes -Werror.
+      Never add -Wno-*, global #pragma diagnostic ignored, or broad NOLINT blocks. Local suppressions
+      exist only together with an AEGIS-DEVIATION marker for a rule that permits deviation.
+    rationale: Compiler warnings reveal whole defect classes before any test runs.
+    checks:
+      - { tool: compiler,    check: "-Werror with toolchain.compiler.flags" }
+      - { tool: gate-script, check: "reject -Wno-* in build files and '#pragma GCC diagnostic ignored' in sources" }
+    linter_check: "compiler:-Werror"
 
-  - id: RULE-C11-018
+  - id: RULE-C11S-018
+    legacy_id: RULE-C11-018
     title: Minimal, Scoped Changes
     category: design
     severity: error
+    enforcement: review
+    deviation: permitted
     instruction: >
-      Keep modifications minimal and targeted. Preserve existing behavior unless explicitly
-      modified by requirements. Avoid unsolicited large-scale refactorings.
-    rationale: Minimizes regression risk and blast radius.
+      Change only what the current requirement or issue demands. Preserve existing behavior unless the
+      requirement explicitly changes it. No unsolicited refactoring, renaming or reformatting of
+      unrelated code. Never modify test files from the test plan phase to make an implementation pass.
+    rationale: Minimizes regression risk and keeps the blast radius consistent with aegis impact.
+    checks:
+      - { tool: gate-script, check: "test files from the test plan phase are unchanged (hash comparison)" }
+
+  - id: RULE-C11S-019
+    title: Sanitizer-Clean Test Runs
+    category: testing
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      The complete test suite passes in the asan-ubsan sanitizer build without any report, and in the
+      tsan build when the code uses threads. Error-path tests (allocation failure, I/O failure, invalid
+      input) are part of the suite so that leak and UB detection also covers cleanup paths.
+    rationale: ASan, LSan, UBSan and TSan detect memory, leak, UB and race defects that static analysis misses.
+    checks:
+      - { tool: sanitizer, check: "asan-ubsan (always), tsan (when_threads)" }
+    linter_check: "sanitizer:address,sanitizer:undefined,sanitizer:leak,sanitizer:thread"
+
+  - id: RULE-C11S-020
+    title: No Variable-Length Arrays, Bounded Stack Usage
+    category: memory
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Do not use variable-length arrays or alloca. Stack buffers have a compile-time constant size;
+      sizes derived from input are checked against that capacity or allocated on the heap.
+      Avoid stack objects larger than a few kilobytes.
+    rationale: VLAs and alloca turn untrusted sizes into unbounded stack growth (stack clash).
+    checks:
+      - { tool: compiler,    check: "-Wvla" }
+      - { tool: gate-script, check: "reject alloca" }
+    linter_check: "compiler:-Wvla"
+    example_bad: |
+      char line[len + 1];   /* len from input */
+    example_good: |
+      char line[LINE_CAP];
+      if (len >= sizeof line) { return ST_ERANGE; }
+
+  - id: RULE-C11S-021
+    title: Literal Format Strings Only
+    category: security
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Every printf-family call and every logging call uses a string literal as format. Variable text
+      is passed as an argument ("%s"). Declare own variadic logging functions with AEGIS_PRINTF so the
+      compiler checks their format strings too.
+    rationale: Non-literal format strings allow memory disclosure and writes via %n.
+    checks:
+      - { tool: compiler,   check: "-Wformat=2 (includes -Wformat-security, -Wformat-nonliteral)" }
+    linter_check: "compiler:-Wformat=2"
+    example_bad: |
+      log_info(msg);
+    example_good: |
+      void log_info(const char *fmt, ...) AEGIS_PRINTF(1, 2);
+      log_info("%s", msg);

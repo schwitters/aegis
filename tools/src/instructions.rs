@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -20,6 +20,16 @@ pub struct RuleItem {
     pub rationale: Option<String>,
     #[serde(default)]
     pub linter_check: Option<String>,
+    #[serde(default)]
+    pub legacy_id: Option<String>,
+    #[serde(default)]
+    pub enforcement: Option<String>,
+    #[serde(default)]
+    pub deviation: Option<String>,
+    #[serde(default)]
+    pub example_bad: Option<String>,
+    #[serde(default)]
+    pub example_good: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,8 +131,13 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
         }
 
         for rf_path in ruleset_files {
-            if let Ok(content) = fs::read_to_string(&rf_path) {
-                if let Ok(rf) = serde_yaml::from_str::<RulesetFile>(&content) {
+            // Fail closed: an unreadable or unparsable ruleset must never be skipped silently.
+            let content = fs::read_to_string(&rf_path)
+                .with_context(|| format!("Failed to read ruleset {}", rf_path.display()))?;
+            {
+                let rf = serde_yaml::from_str::<RulesetFile>(&content)
+                    .with_context(|| format!("Failed to parse ruleset {}", rf_path.display()))?;
+                {
                     out.push_str(&format!("### Ruleset: {} ({})\n\n", rf.ruleset, rf.standard.as_deref().unwrap_or("Standard")));
                     for rule in rf.rules {
                         out.push_str(&format!("- **[{}] {}** (Severity: {})\n", rule.id, rule.title, rule.severity.as_deref().unwrap_or("error")));
@@ -130,6 +145,29 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
                         if let Some(ref rat) = rule.rationale {
                             out.push_str(&format!("  *Rationale:* {}\n", rat.trim()));
                         }
+                        if rule.deviation.as_deref() == Some("permitted") {
+                            out.push_str(&format!(
+                                "  *Deviation:* only with `/* AEGIS-DEVIATION({}): <justification> */` directly above the statement.\n",
+                                rule.id
+                            ));
+                        } else if rule.deviation.as_deref() == Some("forbidden") {
+                            out.push_str("  *Deviation:* forbidden.\n");
+                        }
+                        if let Some(ref bad) = rule.example_bad {
+                            out.push_str("\n  Do NOT write:\n\n  ```c\n");
+                            for line in bad.trim_end().lines() {
+                                out.push_str(&format!("  {}\n", line));
+                            }
+                            out.push_str("  ```\n");
+                        }
+                        if let Some(ref good) = rule.example_good {
+                            out.push_str("\n  Write instead:\n\n  ```c\n");
+                            for line in good.trim_end().lines() {
+                                out.push_str(&format!("  {}\n", line));
+                            }
+                            out.push_str("  ```\n");
+                        }
+                        out.push_str("\n");
                         loaded_rules.push(rule);
                     }
                     out.push_str("\n");

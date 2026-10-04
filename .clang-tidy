@@ -1,0 +1,20 @@
+# clang-tidy configuration matching doc/rules/c11-strict.yaml (schema v2).
+# Every clang-tidy check referenced in the ruleset must be enabled here.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-*,
+  clang-analyzer-*,
+  misc-*,
+  -misc-no-recursion,
+  -misc-include-cleaner,
+  performance-*,
+  portability-*,
+  readability-non-const-parameter,
+  readability-misleading-indentation
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^(src|include)/'
+CheckOptions:
+  - key: bugprone-signal-handler.AsyncSafeFunctionSet
+    value: POSIX
