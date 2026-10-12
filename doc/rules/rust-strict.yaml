@@ -1,0 +1,580 @@
+# Ruleset: Strict, Defensive Rust for Production Applications & Services
+# Schema v2 (same field set as c11-strict.yaml):
+#   * v1 fields (id, title, category, severity, instruction, rationale, linter_check) are kept
+#   * v2 fields (enforcement, checks, deviation, example_bad, example_good, toolchain, deviation_policy) are read by
+#     `aegis instructions` (examples, deviation marker) and `aegis gate` (toolchain.gate_commands, deviation scan).
+#
+# Scope: desktop applications, CLI tools, network services and libraries on Linux / Windows / macOS.
+# For no_std / safety-certified firmware use rust-safety.yaml. Layer rust-service.yaml (async network services) and
+# rust-egui.yaml (egui desktop UIs) on top of this ruleset; they assume it is loaded.
+
+ruleset: rust-strict
+schema_version: 2
+id_prefix: RULE-RS
+description: >
+  Strict, defensive Rust for production software. No panics on production paths, typed errors, unsafe confined to
+  audited FFI crates, lossless conversions, bounded resources, no blocking in async or UI contexts, reproducible
+  builds with a pinned toolchain and an audited dependency graph.
+standard: Rust 2024 Edition (MSRV 1.85), Rust API Guidelines, Clippy (all + selected pedantic/restriction lints)
+language: rust
+
+# -----------------------------------------------------------------------------
+# Toolchain: what the gate actually runs.
+#   * Lints live in the workspace (`[workspace.lints]`, template: templates/rust/workspace-lints.toml) so `cargo
+#     clippy` alone applies them in editors, CI and the gate alike. `clippy.flags` below only adds `-D warnings`.
+#   * gate_commands are appended to the built-in stage commands by `aegis gate`. A command whose tool is not
+#     installed makes the stage NOT EXECUTABLE (fail closed), never silently skipped.
+# -----------------------------------------------------------------------------
+toolchain:
+  rust_toolchain_file: rust-toolchain.toml     # pinned channel + components (RULE-RS-015)
+  clippy:
+    config_file: clippy.toml                   # test allowances + disallowed methods (RULE-RS-001/008/009)
+    flags: ["-D", "warnings"]
+  rustfmt:
+    config_file: rustfmt.toml
+  cargo_deny:
+    config_file: deny.toml                     # advisories, licenses, bans, sources (RULE-RS-014)
+  coverage:
+    tool: cargo-llvm-cov                       # `aegis gate` parses its JSON summary (lines/regions/functions/branches)
+  gate_commands:
+    lint:
+      - cargo fmt --all -- --check
+    static_analysis:
+      - RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+    security:
+      - cargo deny --all-features check
+
+# -----------------------------------------------------------------------------
+# Deviation policy: the only legal way to break a rule marked `deviation: permitted`.
+# -----------------------------------------------------------------------------
+deviation_policy:
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  placement: on the line directly above the suppression attribute (several stacked attributes may share one marker)
+  suppression: "#[expect(<lint>, reason = \"...\")] only; #[allow(...)] is rejected by clippy::allow_attributes"
+  gate_checks:
+    - every #[allow(..)], #![allow(..)], #[expect(..)] and #![expect(..)] sits directly below a marker
+    - every marker references an existing rule ID whose deviation field is 'permitted'
+    - every marker has a non-empty justification
+    - rules with 'deviation: forbidden' cannot be suppressed at all
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+# -----------------------------------------------------------------------------
+# Field reference (v2):
+#   enforcement   gate | review | gate+review
+#   checks        machine checks; tool in {rustc, clippy, rustfmt, cargo-deny, cargo-audit, cargo-llvm-cov, miri,
+#                 gate-script}
+#   linter_check  v1 compatibility string (comma separated, mirrors `checks`)
+#   deviation     permitted | forbidden
+# -----------------------------------------------------------------------------
+
+rules:
+  - id: RULE-RS-001
+    title: No Panics on Production Paths
+    category: error_handling
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Never call .unwrap(), .expect(), panic!(), todo!(), unimplemented!() or unreachable!() outside #[cfg(test)]
+      code. Propagate failures with Result and the ? operator. An invariant that is provably impossible to violate
+      (e.g. a regex literal compiled at startup) may use .expect("why this cannot fail") only directly below an
+      AEGIS-DEVIATION marker plus #[expect(clippy::expect_used, reason = "...")]. Slice indexing that can go out of
+      range counts as a panic too: use .get() on data derived from input (see RULE-RS-007).
+    rationale: >
+      A panic in a worker thread silently kills it; a panic in the UI thread or in a service request handler takes
+      down the whole process and loses unsaved state.
+    checks:
+      - { tool: clippy, check: "clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable" }
+      - { tool: clippy, check: "clippy.toml: allow-unwrap-in-tests, allow-expect-in-tests, allow-panic-in-tests = true" }
+    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic,clippy::todo,clippy::unimplemented,clippy::unreachable"
+    example_bad: |
+      let port: u16 = std::env::var("PORT").unwrap().parse().unwrap();
+    example_good: |
+      let raw = std::env::var("PORT").map_err(|_| ConfigError::Missing("PORT"))?;
+      let port: u16 = raw.parse().map_err(|e| ConfigError::Invalid { key: "PORT", source: e })?;
+
+  - id: RULE-RS-002
+    title: Typed Domain Errors in Libraries, Context in Binaries
+    category: error_handling
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Every library crate defines its own error enum(s) with thiserror; variants carry the data a caller needs to
+      react (path, id, limit) and keep the underlying error as #[source]. Public functions return Result<T, ThatError>,
+      never Box<dyn Error>, anyhow::Error or String. anyhow (or eyre) is allowed only in binary crates (main, CLI
+      glue), where errors are reported, not handled. Never stringify an error just to re-wrap it.
+    rationale: Callers can match on variants deterministically; error chains stay intact for logs.
+    example_bad: |
+      pub fn open_index(path: &Path) -> Result<Index, String> {
+          Connection::open(path).map(Index::new).map_err(|e| e.to_string())
+      }
+    example_good: |
+      #[derive(Debug, thiserror::Error)]
+      pub enum IndexError {
+          #[error("cannot open index {path}")]
+          Open { path: PathBuf, #[source] source: rusqlite::Error },
+          #[error("index schema {found} is newer than supported {supported}")]
+          TooNew { found: i64, supported: i64 },
+      }
+
+      pub fn open_index(path: &Path) -> Result<Index, IndexError> {
+          let conn = Connection::open(path)
+              .map_err(|source| IndexError::Open { path: path.to_owned(), source })?;
+          Index::new(conn)
+      }
+
+  - id: RULE-RS-003
+    title: Never Silently Discard Results or Futures
+    category: error_handling
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Handle every Result. `let _ = fallible();` and `.ok();` used only to silence a Result are forbidden. Mark
+      functions whose return value carries meaning with #[must_use]. A failure that genuinely needs no reaction
+      (best-effort cleanup in Drop, a log write) is logged at debug level or discarded below an AEGIS-DEVIATION
+      marker with #[expect(clippy::let_underscore_must_use, reason = "...")]. Never drop a Future without awaiting
+      or spawning it.
+    rationale: Silent continuation after a failed write or a lost task is the most common source of corrupted state.
+    checks:
+      - { tool: rustc,  check: "unused_must_use (deny)" }
+      - { tool: clippy, check: "clippy::let_underscore_must_use, clippy::let_underscore_future" }
+    linter_check: "rustc:unused_must_use,clippy::let_underscore_must_use,clippy::let_underscore_future"
+    example_bad: |
+      let _ = std::fs::remove_file(&scratch);
+    example_good: |
+      if let Err(err) = std::fs::remove_file(&scratch) {
+          tracing::debug!(path = %scratch.display(), %err, "scratch file not removed");
+      }
+
+  - id: RULE-RS-004
+    title: Unsafe Only in Designated FFI Crates, Each Block Proven
+    category: memory_safety
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Every crate starts with #![forbid(unsafe_code)] except crates explicitly designated as FFI crates (name ends
+      in -sys or -ffi and is listed in doc/architecture). In FFI crates: #![deny(unsafe_op_in_unsafe_fn)], one unsafe
+      operation per block, each block preceded by a `// SAFETY:` comment that names the invariant (pointer validity,
+      lifetime, alignment, aliasing, thread affinity) and why it holds here. Every `unsafe fn` documents its
+      contract in a `# Safety` doc section. Unsafe code is wrapped once in a safe API; callers never see raw pointers.
+    rationale: Confines the audit surface for memory safety to a few reviewed files.
+    checks:
+      - { tool: rustc,  check: "unsafe_code (forbid outside FFI crates), unsafe_op_in_unsafe_fn (deny)" }
+      - { tool: clippy, check: "clippy::undocumented_unsafe_blocks, clippy::multiple_unsafe_ops_per_block, clippy::missing_safety_doc" }
+      - { tool: miri,   check: "cargo +nightly miri test -p <ffi-free crates with unsafe> (where applicable)" }
+    linter_check: "rustc:unsafe_code,rustc:unsafe_op_in_unsafe_fn,clippy::undocumented_unsafe_blocks,clippy::multiple_unsafe_ops_per_block"
+    example_bad: |
+      let ctx = unsafe { llama_init_from_model(model, params) };
+      let n = unsafe { llama_n_embd(model) };
+    example_good: |
+      // SAFETY: `self.model` is non-null (checked in `Model::load`) and outlives the context, which `Context`
+      // borrows for `'m`; llama.cpp does not retain `params` after the call.
+      let ctx = unsafe { sys::llama_init_from_model(self.model.as_ptr(), params) };
+      let ctx = NonNull::new(ctx).ok_or(EmbedError::ContextInit)?;
+
+  - id: RULE-RS-005
+    title: Sound FFI Boundaries
+    category: memory_safety
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Never let a panic unwind across an extern "C" boundary: every Rust callback handed to C wraps its body in
+      std::panic::catch_unwind and converts a panic into an error code. Strings cross as CString/CStr, never as
+      &str pointers. Every C-owned resource has exactly one RAII owner with Drop calling the matching free function.
+      Manual `unsafe impl Send`/`Sync` require a `// SAFETY:` proof of the C library's threading contract. Pin the C
+      library version (tag + patch hash) and keep generated bindings reproducible (bindgen with an allowlist).
+    rationale: Unwinding into C is undefined behavior; double frees and use-after-free hide at FFI seams.
+    checks:
+      - { tool: clippy, check: "clippy::not_unsafe_ptr_arg_deref, clippy::mem_forget" }
+    linter_check: "clippy::not_unsafe_ptr_arg_deref,clippy::mem_forget"
+    example_good: |
+      extern "C" fn log_cb(level: c_int, text: *const c_char, _user: *mut c_void) {
+          let outcome = std::panic::catch_unwind(|| {
+              if text.is_null() { return; }
+              // SAFETY: llama.cpp passes a NUL-terminated string valid for the duration of the callback.
+              let msg = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+              tracing::warn!(level, %msg, "llama.cpp");
+          });
+          if outcome.is_err() {
+              // A panic must never unwind into C: the log line is lost, nothing else is affected.
+              tracing::error!("panic inside the llama.cpp log callback");
+          }
+      }
+
+  - id: RULE-RS-006
+    title: Lossless, Explicit Numeric Conversions
+    category: types
+    severity: error
+    enforcement: gate
+    deviation: permitted
+    instruction: >
+      Do not use `as` for conversions that can truncate, wrap or lose sign (u64 -> u32, i64 -> usize, f64 -> u32,
+      usize -> i32). Use From for widening and TryFrom with an explicit error for narrowing. `as` is allowed for
+      float <-> float and for documented bit reinterpretation below an AEGIS-DEVIATION marker (e.g. DSP code that
+      converts f64 sample positions to f32).
+    rationale: Silent truncation of file sizes, offsets or counts corrupts indexes and creates out-of-bounds reads.
+    checks:
+      - { tool: clippy, check: "clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_lossless" }
+    linter_check: "clippy::cast_possible_truncation,clippy::cast_sign_loss,clippy::cast_possible_wrap,clippy::cast_lossless"
+    example_bad: |
+      let rows = stmt.query_row([], |r| r.get::<_, i64>(0))? as usize;
+    example_good: |
+      let rows: i64 = stmt.query_row([], |r| r.get(0))?;
+      let rows = usize::try_from(rows).map_err(|_| IndexError::Corrupt("negative row count"))?;
+
+  - id: RULE-RS-007
+    title: Checked Arithmetic and Indexing on Untrusted Sizes
+    category: defensive_programming
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Sizes, offsets and counts that come from files, the network or another process are untrusted. Use checked_*/
+      saturating_* arithmetic and .get()/.get(a..b) on them; validate against an explicit maximum before allocating
+      (Vec::with_capacity(untrusted) is forbidden). Modules that parse external formats (binary headers, JSON lines,
+      archives, media containers) declare #![deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)].
+    rationale: Out-of-range indexing panics (RULE-RS-001); unchecked arithmetic on input wraps in release builds.
+    checks:
+      - { tool: clippy, check: "clippy::indexing_slicing, clippy::arithmetic_side_effects (deny in parser modules)" }
+    linter_check: "clippy::indexing_slicing,clippy::arithmetic_side_effects"
+    example_bad: |
+      let len = u32::from_le_bytes(header[4..8].try_into()?) as usize;
+      let mut buf = Vec::with_capacity(len);
+    example_good: |
+      let len_bytes = header.get(4..8).ok_or(ParseError::Truncated)?;
+      let len = usize::try_from(u32::from_le_bytes(len_bytes.try_into()?))?;
+      if len > MAX_CHUNK { return Err(ParseError::TooLarge { len, max: MAX_CHUNK }); }
+      let mut buf = Vec::with_capacity(len);
+
+  - id: RULE-RS-008
+    title: No Blocking Inside Async Tasks or the UI Thread
+    category: concurrency
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Inside async fn and inside UI frame callbacks, never call blocking APIs: std::fs, std::net, std::thread::sleep,
+      std::process::Command::output/status, synchronous SQLite, CPU-heavy loops (> ~1 ms). Move them to
+      tokio::task::spawn_blocking, a dedicated worker thread, or tokio::fs/tokio::process. Never hold a std or
+      parking_lot MutexGuard across .await; use tokio::sync::Mutex only when the lock must span an await.
+    rationale: One blocked runtime worker or UI frame stalls every other request or makes the window freeze.
+    checks:
+      - { tool: clippy, check: "clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::unused_async" }
+      - { tool: clippy, check: "clippy.toml disallowed-methods: std::thread::sleep" }
+    linter_check: "clippy::await_holding_lock,clippy::await_holding_refcell_ref,clippy::disallowed_methods"
+    example_bad: |
+      async fn thumbnail(path: PathBuf) -> Result<Vec<u8>, ThumbError> {
+          let bytes = std::fs::read(&path)?;          // blocks a runtime worker
+          Ok(render(&bytes)?)                          // CPU-heavy
+      }
+    example_good: |
+      async fn thumbnail(path: PathBuf) -> Result<Vec<u8>, ThumbError> {
+          tokio::task::spawn_blocking(move || {
+              let bytes = std::fs::read(&path)?;
+              render(&bytes)
+          })
+          .await?
+      }
+
+  - id: RULE-RS-009
+    title: Bounded Queues and Explicit Backpressure
+    category: resource_management
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Every channel, queue, cache and buffer has an explicit capacity chosen from a requirement or measurement.
+      Use tokio::sync::mpsc::channel(n), std::sync::mpsc::sync_channel(n) or crossbeam bounded(n); unbounded
+      channels are forbidden. Caches are LRU with a byte or entry budget. Producers either await capacity
+      (backpressure) or drop with a counted, logged reason; they never grow memory without limit.
+    rationale: Unbounded queues turn a slow consumer into an out-of-memory crash under load (e.g. a burst of
+      file-system events).
+    checks:
+      - { tool: clippy, check: "clippy.toml disallowed-methods: tokio::sync::mpsc::unbounded_channel, std::sync::mpsc::channel, crossbeam_channel::unbounded" }
+    linter_check: "clippy::disallowed_methods"
+
+  - id: RULE-RS-010
+    title: Structured Logging Through tracing Only
+    category: observability
+    severity: error
+    enforcement: gate
+    deviation: permitted
+    instruction: >
+      Library and service code logs exclusively through the tracing crate with structured fields
+      (tracing::info!(path = %p.display(), files, "sync done")). No println!, eprintln!, print!, dbg! outside
+      #[cfg(test)]. A CLI's user-facing output goes through an explicit writer (std::io::Write on stdout) in the binary
+      crate, below an AEGIS-DEVIATION marker if clippy::print_stdout must be suppressed. Never log secrets, tokens,
+      file contents or full query texts at info level or above.
+    rationale: Structured events are filterable and machine-readable; stray prints corrupt line protocols on stdout.
+    checks:
+      - { tool: clippy, check: "clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro" }
+    linter_check: "clippy::print_stdout,clippy::print_stderr,clippy::dbg_macro"
+
+  - id: RULE-RS-011
+    title: Paths Are Paths, Not Strings
+    category: design
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      File system paths are &Path/PathBuf (or OsStr) in every signature and struct. Build them with Path::join, never
+      with format!("{}/{}"). Convert to String only for display (path.display()) or for an explicit, documented wire
+      format (UTF-8 with lossless failure: to_str().ok_or(..)). Canonicalize at exactly one place per input (with a
+      named function) and compare canonical forms only. Account for Windows: drive letters, UNC/verbatim prefixes
+      (\\?\), case-insensitive comparison, reserved names, 260-char legacy limits.
+    rationale: Non-UTF-8 file names exist on Linux; string paths break on Windows separators and case rules.
+    example_bad: |
+      fn index_path(root: &str, name: &str) -> String { format!("{}/{}", root, name) }
+    example_good: |
+      fn index_path(root: &Path, name: &OsStr) -> PathBuf { root.join(name) }
+
+  - id: RULE-RS-012
+    title: Validate at Trust Boundaries, Before Allocation
+    category: security
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Data from files, sockets, child processes, environment and configuration is parsed into typed structs at the
+      boundary and validated there. Use #[serde(deny_unknown_fields)] for configuration and protocol messages; impose
+      explicit limits (line length, body size, list length, string length) before deserializing; reject instead of
+      truncating silently. Newtypes carry validated values (struct CollectionId(String) with a checked constructor).
+    rationale: Every later layer can rely on invariants; oversized or malformed input never reaches business logic.
+    example_good: |
+      #[derive(Deserialize)]
+      #[serde(deny_unknown_fields)]
+      pub struct SearchRequest {
+          pub query: BoundedString<512>,
+          #[serde(default = "default_limit")]
+          pub limit: Limit,   // newtype, 1..=200
+      }
+
+  - id: RULE-RS-013
+    title: Secrets Never in Source, Logs or Debug Output
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      No credentials, tokens or keys in source, tests fixtures or default configs. Secrets are loaded from a file
+      with restrictive permissions (0600) or the OS credential store, held in secrecy::SecretString (or a newtype
+      whose Debug prints "[redacted]"), compared in constant time (subtle::ConstantTimeEq), and stored at rest only
+      as a hash when they are verification tokens.
+    rationale: Leaked tokens in logs, crash reports or Git history are the most common credential exposure.
+    checks:
+      - { tool: gate-script, check: "secret scan (gitleaks/trufflehog when installed) over the repository" }
+
+  - id: RULE-RS-014
+    title: Audited, Minimal, Reproducible Dependency Graph
+    category: build
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Cargo.lock is committed for every workspace with binaries; every cargo invocation in CI and the gate uses
+      --locked. cargo deny check must pass: no known advisories, only allowlisted licenses, crates only from
+      crates.io (or explicitly allowlisted git sources), no wildcard versions. Every new direct dependency is
+      recorded in doc/architecture/dependencies.md with purpose, license and the alternative that was rejected.
+      Prefer pure-Rust crates; a C dependency needs an architecture decision.
+    rationale: Generated code tends to add dependencies freely; each one is supply-chain and license risk.
+    checks:
+      - { tool: cargo-deny,  check: "cargo deny --all-features check (advisories, bans, licenses, sources)" }
+      - { tool: cargo-audit, check: "cargo audit (when installed)" }
+      - { tool: gate-script, check: "cargo build/test/clippy run with --locked" }
+    linter_check: "cargo-deny:check,cargo-audit"
+
+  - id: RULE-RS-015
+    title: Pinned Toolchain, Declared MSRV and Edition
+    category: build
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      The repository root has rust-toolchain.toml pinning the channel (an exact stable version, e.g. "1.97.0") with
+      the components clippy, rustfmt, llvm-tools-preview. The workspace Cargo.toml declares edition and
+      rust-version (MSRV) in [workspace.package]; member crates inherit them (edition.workspace = true).
+    rationale: Lints and formatting change between compiler versions; a gate must be reproducible.
+    checks:
+      - { tool: gate-script, check: "rust-toolchain.toml present; workspace.package.rust-version set" }
+
+  - id: RULE-RS-016
+    title: Warnings Fail Closed, Lints Configured Centrally
+    category: build
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Lint levels are defined once in the workspace Cargo.toml [workspace.lints] (template:
+      templates/rust/workspace-lints.toml) and every crate has [lints] workspace = true. The gate runs clippy with
+      -D warnings. #[allow(...)] is forbidden; a justified exception uses #[expect(lint, reason = "...")] directly
+      below an AEGIS-DEVIATION marker, so a stale exception becomes a warning itself. Never lower lint levels in a
+      crate, in build scripts or via RUSTFLAGS.
+    rationale: Suppressions must be visible, justified and self-cleaning.
+    checks:
+      - { tool: clippy,      check: "clippy::allow_attributes, clippy::allow_attributes_without_reason" }
+      - { tool: gate-script, check: "aegis deviation scan: every allow/expect attribute below a valid marker" }
+    linter_check: "clippy::allow_attributes,clippy::allow_attributes_without_reason"
+    example_bad: |
+      #[allow(clippy::cast_possible_truncation)]
+      let sample = pos as f32;
+    example_good: |
+      // AEGIS-DEVIATION(RULE-RS-006): sample position < 2^24, exactly representable in f32 (bounded by MAX_SAMPLES)
+      #[expect(clippy::cast_possible_truncation, reason = "bounded by MAX_SAMPLES, see RULE-RS-006 deviation")]
+      let sample = pos as f32;
+
+  - id: RULE-RS-017
+    title: rustfmt Is the Only Formatting
+    category: style
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      All code is formatted with cargo fmt using the repository rustfmt.toml. Do not add #[rustfmt::skip] except for
+      data tables (lookup tables, test vectors), and then only on the item, never on a module.
+    rationale: Eliminates formatting noise from diffs and reviews.
+    checks:
+      - { tool: rustfmt, check: "cargo fmt --all -- --check" }
+    linter_check: "rustfmt:check"
+
+  - id: RULE-RS-018
+    title: Documented Public API
+    category: documentation
+    severity: error
+    enforcement: gate
+    deviation: permitted
+    instruction: >
+      Library crates deny missing_docs. Every public fallible function has an `# Errors` section listing the error
+      variants it returns, every function that can panic (tests aside) a `# Panics` section, every unsafe fn a
+      `# Safety` section. Doc examples compile (they run as doc tests). rustdoc runs with -D warnings (broken
+      intra-doc links fail the gate).
+    rationale: Implementation models and reviewers work from the documented contract, not from guesses.
+    checks:
+      - { tool: rustc,  check: "missing_docs (deny in library crates)" }
+      - { tool: clippy, check: "clippy::missing_errors_doc, clippy::missing_panics_doc, clippy::missing_safety_doc" }
+      - { tool: gate-script, check: "RUSTDOCFLAGS=\"-D warnings\" cargo doc --workspace --no-deps" }
+    linter_check: "rustc:missing_docs,clippy::missing_errors_doc,clippy::missing_panics_doc,clippy::missing_safety_doc"
+
+  - id: RULE-RS-019
+    title: Deterministic, Traceable Tests
+    category: testing
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Every #[test] (and every integration test file's test fn) carries a doc comment `/// @verifies TEST-XXX`.
+      Tests are deterministic: no sleeps for synchronization (use channels, barriers, tokio::time::pause), no network
+      beyond loopback, no dependence on the developer's files or home directory (tempfile::TempDir), fixed seeds for
+      randomness. Parsers and normalizers get property tests (proptest) for "never panics" and round-trip
+      properties. Tests that need large external assets (models) are #[ignore]d with a reason and run in a named CI
+      job, never silently skipped.
+    rationale: Flaky tests erode the gate; traceability needs the annotation on the test itself.
+    checks:
+      - { tool: gate-script, check: "aegis trace: every TEST-xxx has an @verifies annotation" }
+    example_good: |
+      /// @verifies TEST-SRCH-004
+      #[test]
+      fn lookup_queries_weigh_words_double() {
+          assert!(Searcher::is_lookup(&terms("K7Q2LM")));
+          assert!(!Searcher::is_lookup(&terms("sunset at the beach")));
+      }
+
+  - id: RULE-RS-020
+    title: Minimal, Scoped Changes
+    category: design
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Change only what the current requirement or issue demands. No unsolicited refactoring, renaming, dependency
+      upgrades or reformatting of unrelated code. Never modify tests written in the test-plan phase to make an
+      implementation pass; a wrong test is reported as a finding.
+    rationale: Keeps the blast radius consistent with `aegis impact`.
+    checks:
+      - { tool: gate-script, check: "test files from the test plan phase are unchanged (hash comparison)" }
+
+  - id: RULE-RS-021
+    title: Child Processes Without a Shell, With Limits
+    category: security
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Spawn programs with std::process::Command / tokio::process::Command and an argument vector; never through
+      `sh -c`, `cmd /C` or string concatenation with input. Resolve the executable to an absolute, configured path;
+      set an explicit environment (env_clear + allowlist) where the child does not need the parent's; close stdin
+      when unused; enforce a timeout and kill the child on drop (kill_on_drop(true)). Treat a child's stdout as
+      untrusted input (RULE-RS-012).
+    rationale: Shell interpolation of file names is command injection; orphaned children leak resources.
+    example_bad: |
+      Command::new("sh").arg("-c").arg(format!("ffprobe {}", path.display())).output()?;
+    example_good: |
+      let out = tokio::time::timeout(PROBE_TIMEOUT,
+          tokio::process::Command::new(&cfg.ffprobe)
+              .args(["-v", "error", "-show_format", "-of", "json"])
+              .arg(&path)
+              .stdin(Stdio::null())
+              .kill_on_drop(true)
+              .output(),
+      ).await.map_err(|_| ProbeError::Timeout)??;
+
+  - id: RULE-RS-022
+    title: Platform Code Isolated Behind Traits
+    category: design
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      #[cfg(target_os = ...)] and platform crates (windows, nix, objc2, zbus, ...) appear only in a dedicated
+      platform module or crate that implements project traits (e.g. FileWatcher, Autostart, Opener). Core crates
+      compile for every supported target without cfg branches. CI builds every supported target (at least
+      x86_64-unknown-linux-gnu and x86_64-pc-windows-msvc).
+    rationale: Keeps the core testable on any host and makes the per-platform surface explicit.
+    checks:
+      - { tool: gate-script, check: "cargo check --workspace --target <each supported target> (CI matrix)" }
+
+  - id: RULE-RS-023
+    title: Shared State Discipline
+    category: concurrency
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      No `static mut`. Global state only via std::sync::OnceLock / LazyLock with immutable contents. Shared mutable
+      state lives behind Arc<Mutex<_>>/RwLock with the smallest possible critical section, or is owned by one task
+      and reached through messages (preferred). When more than one lock exists, the lock order is documented on the
+      types and never inverted. Atomics use the weakest correct Ordering with a comment justifying it.
+    rationale: Data races are prevented by the compiler; deadlocks and lost updates are not.
+    checks:
+      - { tool: rustc, check: "static_mut_refs (deny)" }
+
+  - id: RULE-RS-024
+    title: No Process-Global Mutation at Runtime
+    category: design
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Never call std::env::set_var/remove_var, change the current directory or install global allocators/loggers
+      from library code. Configuration flows through explicit structs; child processes get their environment via
+      Command::env.
+    rationale: set_var is unsound with concurrent readers (unsafe since edition 2024) and makes behavior order-dependent.
+    checks:
+      - { tool: clippy, check: "clippy.toml disallowed-methods: std::env::set_var, std::env::remove_var, std::env::set_current_dir" }
+    linter_check: "clippy::disallowed_methods"
+
+  - id: RULE-RS-025
+    title: Stream Large Inputs, Budget Memory
+    category: resource_management
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Never read a file of unbounded size completely into memory (fs::read, read_to_string) without first checking
+      its size against a documented limit. Large inputs (media, PDFs, archives, database exports) are processed as
+      streams or in bounded chunks. Each long-running component documents its steady-state memory budget in the
+      architecture, and tests assert caches stay within it.
+    rationale: A single 20 GB video or log file must not take down an indexer that runs unattended on a server.

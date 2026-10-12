@@ -1,0 +1,53 @@
+# Aegis rust-strict.yaml: lint levels for the workspace root Cargo.toml (RULE-RS-016).
+# Copy these tables into the workspace Cargo.toml and add `[lints] workspace = true` to every member crate.
+# `aegis gate` runs clippy with -D warnings, so "warn" below still fails the gate; "deny" also fails local builds.
+#
+# unsafe_code is NOT set here: `forbid` cannot be lifted for the FFI crate. Put `#![forbid(unsafe_code)]` at the top of
+# every crate root except the designated -sys/-ffi crate instead (RULE-RS-004).
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"     # RULE-RS-004
+unused_must_use = "deny"            # RULE-RS-003
+static_mut_refs = "deny"            # RULE-RS-023
+missing_docs = "warn"               # RULE-RS-018
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+# RULE-RS-001 no panics on production paths (tests: see clippy.toml)
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+# RULE-RS-003 never discard results or futures
+let_underscore_must_use = "deny"
+let_underscore_future = "deny"
+# RULE-RS-004 / RULE-RS-005 unsafe and FFI
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+missing_safety_doc = "deny"
+not_unsafe_ptr_arg_deref = "deny"
+mem_forget = "deny"
+# RULE-RS-006 lossless conversions
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
+cast_lossless = "deny"
+# RULE-RS-008 / RULE-RS-009 / RULE-RS-024 no blocking, bounded queues, no global mutation (see clippy.toml)
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+unused_async = "deny"
+disallowed_methods = "deny"
+# RULE-RS-010 tracing only
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+# RULE-RS-016 suppressions only via #[expect(.., reason = "..")] below an AEGIS-DEVIATION marker
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+# RULE-RS-018 documented public API
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"

@@ -1,0 +1,32 @@
+# Aegis rust-strict.yaml: dependency policy for cargo-deny (RULE-RS-014, RULE-RSV-002).
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []                      # every entry needs an issue ID and an expiry date in a comment
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+  "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "BSL-1.0", "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+  { crate = "openssl", reason = "TLS via rustls only (RULE-RSV-002)" },
+  { crate = "openssl-sys", reason = "TLS via rustls only (RULE-RSV-002)" },
+  { crate = "native-tls", reason = "TLS via rustls only (RULE-RSV-002)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

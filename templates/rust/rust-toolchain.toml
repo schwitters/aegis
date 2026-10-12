@@ -1,0 +1,5 @@
+# Aegis rust-strict.yaml: pinned toolchain (RULE-RS-015). Bump deliberately, in its own change, with a green gate.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt", "llvm-tools-preview"]
+profile = "minimal"

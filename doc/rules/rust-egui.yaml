@@ -1,0 +1,172 @@
+# Ruleset: Rust Desktop UIs with egui / eframe
+# Schema v2. Layered on top of rust-strict.yaml (load both); IDs RULE-REG-*.
+#
+# egui is an immediate-mode GUI: the whole UI is rebuilt every frame from application state. Most rules below keep
+# that frame function cheap, side-effect free and independent of I/O.
+
+ruleset: rust-egui
+schema_version: 2
+id_prefix: RULE-REG
+description: >
+  Rules for responsive, testable egui/eframe desktop applications on Windows and Linux: no I/O in the frame
+  function, explicit state and view-model layers, repaint and texture budgets, stale-result guards, keyboard and
+  accessibility support, complex-script text and isolated platform integration.
+standard: egui / eframe 0.3x (wgpu or glow backend), AccessKit
+language: rust
+
+deviation_policy:
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  placement: on the line directly above the deviating statement or suppression attribute
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+rules:
+  - id: RULE-REG-001
+    title: The Frame Function Never Blocks
+    category: concurrency
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      eframe::App::update (and every function it calls) performs no file, network, database, process or model
+      work and no computation above ~1 ms. Work is sent as a command over a bounded channel to a background
+      runtime (a tokio runtime on its own threads or plain worker threads); results come back over a channel that
+      update() drains with try_recv(). The background side calls egui::Context::request_repaint() after sending a
+      result so the UI wakes up.
+    rationale: A frame budget of 16 ms is spent in milliseconds; any blocking call freezes the window and input.
+    example_bad: |
+      if ui.button("Search").clicked() {
+          self.hits = self.client.search_blocking(&self.query)?;   // freezes the window
+      }
+    example_good: |
+      if ui.button("Search").clicked() {
+          self.generation += 1;
+          let command = Command::Search { generation: self.generation, query: self.query.clone() };
+          if self.commands.try_send(command).is_err() {
+              self.status = Status::Busy;   // queue full: shown in the status line, retried on the next keystroke
+          }
+      }
+      while let Ok(event) = self.events.try_recv() {
+          self.apply(event);   // pure state update
+      }
+
+  - id: RULE-REG-002
+    title: State, View-Model and Widgets Are Separate Layers
+    category: design
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Keep three layers: (1) application state (plain structs, no egui types), changed only by apply(event) and
+      by user intents; (2) view-models derived from state in pure functions (every string, badge and reason a row
+      shows is computed in one place, unit-tested without a window); (3) widgets that render view-models and return
+      user intents. Widgets never mutate state directly and never talk to the background side.
+    rationale: Immediate mode invites logic in widgets; separated layers stay testable and consistent across panels.
+
+  - id: RULE-REG-003
+    title: Idle Means Zero Repaints
+    category: performance_efficiency
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Do not call request_repaint() unconditionally. Repaint only on input (automatic), on background results
+      (request_repaint from the worker) and for running animations (request_repaint_after with the animation's
+      frame interval, stopped when it ends). A hidden or unfocused window does not animate. Idle CPU of the UI
+      process is measured in a test or benchmark and stays below 1 %.
+    rationale: A tray application runs all day; continuous repaint drains laptop batteries.
+
+  - id: RULE-REG-004
+    title: Texture and Image Budget
+    category: resource_management
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Images (thumbnails, page renders, frames) are decoded off the UI thread, uploaded once as a TextureHandle and
+      kept in an LRU cache with a byte budget (e.g. 64 MiB); evicted handles are dropped so the GPU memory is freed.
+      Never call ctx.load_texture in a loop per frame for the same image; never keep full-resolution originals
+      when a thumbnail is displayed. Clear the cache when the window hides.
+    rationale: Unbounded texture uploads are both a GPU memory leak and a frame-time spike.
+
+  - id: RULE-REG-005
+    title: Stale-Result Guards and Debounce From the Keystroke
+    category: concurrency
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Every asynchronous request started by input carries a monotonically increasing generation number; results
+      whose generation is older than the newest request are dropped. Debounce delays are measured from the input
+      event (a deadline Instant stored with the request), not from when a task happens to run, so displayed results
+      never jitter. Show fast partial results (e.g. keyword hits) immediately and refine them when slower results
+      arrive.
+    rationale: Typing produces bursts of requests; out-of-order replies would overwrite newer results.
+
+  - id: RULE-REG-006
+    title: Keyboard-First and Accessible
+    category: interaction_capability
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Every action is reachable with the keyboard (arrows, Enter, Escape, documented shortcuts shown in the UI);
+      focus is set explicitly when a window opens (request_focus on the query field) and moves predictably. Keep
+      eframe's AccessKit support enabled; every interactive widget has a label usable by screen readers
+      (Response::widget_info / labelled_by). Respect IME composition: never treat keys as shortcuts while text is
+      being composed. Contrast meets WCAG AA in light and dark themes.
+    rationale: A launcher-style search UI is used without the mouse; accessibility is a product requirement.
+
+  - id: RULE-REG-007
+    title: Unicode, RTL and Complex Scripts Are Tested
+    category: interaction_capability
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Bundle fonts that cover every script the product claims to support (e.g. Noto Sans + Noto Sans Bengali +
+      Noto Naskh Arabic) and register them as fallbacks. Verify rendering of complex scripts (Indic conjuncts,
+      Arabic joining, right-to-left runs) with snapshot tests; where the egui text pipeline cannot shape a script
+      correctly, render that text through a shaping engine (e.g. cosmic-text/rustybuzz) into a texture or document
+      the limitation as a deviation with an issue. Never truncate strings by bytes; truncate by grapheme clusters.
+    rationale: egui's default text layout does not perform full OpenType shaping; multilingual text breaks silently.
+    checks:
+      - { tool: gate-script, check: "snapshot tests (egui_kittest) for bn/ar sample strings" }
+
+  - id: RULE-REG-008
+    title: Snapshot and Interaction Tests Without a Display
+    category: testing
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      UI behavior is tested headlessly with egui_kittest (Harness): key presses, clicks, focus and the resulting
+      intents/state are asserted; important screens have image snapshot tests with a documented tolerance. Tests
+      never require a real window server, GPU driver or the developer's files.
+    rationale: Keeps the UI inside the gate instead of in manual checks.
+    checks:
+      - { tool: gate-script, check: "cargo test -p <ui crate> (egui_kittest harness, wgpu software adapter if needed)" }
+
+  - id: RULE-REG-009
+    title: Platform Integration Behind Traits
+    category: design
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Tray icon, global hotkey, autostart, "open file at location" and notifications are implemented behind traits
+      in a platform module (RULE-RS-022), one implementation per OS (Windows, Linux X11, Linux Wayland via XDG
+      portals) plus a no-op implementation used by tests. The UI reports missing capabilities honestly (e.g. "global
+      shortcut unavailable on this desktop: bind `digup --toggle` instead") instead of failing silently.
+    rationale: Desktop integration is the least portable part of a desktop app.
+
+  - id: RULE-REG-010
+    title: Errors Are Shown, Never Panicked
+    category: error_handling
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Failures from the background side arrive as events and are rendered as a non-modal status line or toast with
+      a concrete next step; the frame function contains no unwrap/expect (RULE-RS-001). A lost server connection
+      switches the UI into a clearly labelled degraded state and reconnects with backoff.
+    rationale: A crashed tray app is invisible to the user until they need it.

@@ -1,0 +1,193 @@
+# Ruleset: Rust Network Services (tokio / axum / tonic)
+# Schema v2. Layered on top of rust-strict.yaml (load both); IDs RULE-RSV-*.
+#
+# Scope: long-running daemons and network services: HTTP/JSON or gRPC APIs, background job runners, file-system
+# indexers, anything started by systemd, a Windows service manager or a container runtime.
+
+ruleset: rust-service
+schema_version: 2
+id_prefix: RULE-RSV
+description: >
+  Operational rules for long-running Rust services: authenticated-by-default APIs, TLS through rustls, timeouts and
+  limits on every boundary, graceful shutdown, tracked background tasks, safe database access from async code and
+  least-privilege deployment.
+standard: tokio 1.x, axum 0.8 / tonic 0.13, rustls 0.23, OWASP ASVS 4.0 (Level 2) for the API surface
+language: rust
+
+# No extra gate commands: contract tests (RULE-RSV-007) run in the normal `cargo test`, the TLS ban (RULE-RSV-002) in
+# cargo-deny via rust-strict.yaml (deny.toml template bans openssl/native-tls).
+
+deviation_policy:
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  placement: on the line directly above the deviating statement or suppression attribute
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+rules:
+  - id: RULE-RSV-001
+    title: Authenticated by Default, Deny by Default
+    category: security
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Every route requires authentication except an explicit, minimal allowlist (health/readiness, pairing
+      handshake). Authentication is a router-level layer (tower middleware / tonic interceptor), never a call inside
+      handlers. Authorization (which collection, which operation) is checked in one place per resource type and
+      returns 404 for resources the caller may not see (no existence oracle). Tokens are high-entropy random
+      (>= 256 bit), stored server-side only as SHA-256 hashes, compared in constant time, revocable individually.
+    rationale: A forgotten check on one handler exposes the whole data set; layered auth cannot be forgotten.
+    example_good: |
+      let api = Router::new()
+          .route("/api/v1/search", post(search))
+          .route("/api/v1/files/{id}/thumbnail", get(thumbnail))
+          .layer(from_fn_with_state(state.clone(), require_token));   // all routes above
+      let app = Router::new()
+          .route("/healthz", get(|| async { "ok" }))                   // the only public route
+          .merge(api);
+
+  - id: RULE-RSV-002
+    title: TLS via rustls, Plaintext Only on Loopback
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Network listeners on non-loopback addresses use TLS 1.3/1.2 via rustls (tokio-rustls / axum-server /
+      tonic's rustls feature). No openssl or native-tls in the dependency graph. Plaintext is allowed only on
+      127.0.0.1/::1, Unix domain sockets or Windows named pipes. Clients pin the server certificate (fingerprint
+      captured at pairing) or validate against a configured CA; never disable verification.
+    rationale: Search results and file previews are personal data; a LAN is not a trust boundary.
+    checks:
+      - { tool: cargo-deny, check: "bans: openssl, openssl-sys, native-tls" }
+
+  - id: RULE-RSV-003
+    title: Timeouts and Limits on Every Boundary
+    category: reliability
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Every inbound request has a body size limit (axum DefaultBodyLimit / tonic max_decoding_message_size), a total
+      timeout (tower TimeoutLayer) and a concurrency limit (ConcurrencyLimitLayer or a semaphore per expensive
+      operation such as embedding or thumbnail rendering). Every outbound call (HTTP, child process, database busy
+      wait) has a timeout. Limits are constants with names and live in one module, referenced by requirements.
+    rationale: One slow client or a hung decoder must not exhaust threads, memory or file handles.
+
+  - id: RULE-RSV-004
+    title: Graceful Shutdown and Crash-Consistent State
+    category: reliability
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Handle SIGTERM/SIGINT (tokio::signal) and the Windows service stop control through one CancellationToken
+      (tokio_util). On cancel: stop accepting, let in-flight requests finish within a bounded grace period, flush
+      and checkpoint the database, terminate child processes, then exit 0. Persistent state is only ever modified in
+      transactions, so a SIGKILL at any point leaves a consistent store that resumes on next start.
+    rationale: Services are restarted by package upgrades and reboots; a corrupt index costs hours of re-indexing.
+
+  - id: RULE-RSV-005
+    title: Tracked Background Tasks
+    category: concurrency
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Background work is spawned into a tokio_util::task::TaskTracker or JoinSet owned by the component that
+      started it, observes the shared CancellationToken, and reports failure (JoinError, Err) to the supervisor,
+      which logs it and restarts with backoff or escalates. A bare tokio::spawn whose JoinHandle is dropped needs a
+      deviation marker explaining why its failure is irrelevant.
+    rationale: Detached tasks fail silently and keep running during shutdown.
+
+  - id: RULE-RSV-006
+    title: Blocking Storage Behind a Dedicated Executor
+    category: concurrency
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Synchronous storage (rusqlite, file I/O on large trees) runs on dedicated threads: one writer thread owning
+      the write connection and receiving commands over a bounded channel, plus a small pool of read-only
+      connections used through spawn_blocking. SQLite runs in WAL mode with busy_timeout set; long writes are
+      split into bounded transactions so readers are never starved.
+    rationale: Keeps async workers free (RULE-RS-008) and gives SQLite the single-writer model it needs.
+
+  - id: RULE-RSV-007
+    title: Versioned API With a Shared Contract Crate
+    category: compatibility
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      All request/response/event types live in one protocol crate used by server and clients (serde or prost
+      types). Paths/packages carry the major version (/api/v1, digup.v1). Within a major version changes are
+      additive only: new optional fields with defaults, new endpoints; never renamed or removed fields, never
+      changed meanings. Contract tests (prefix `contract_`) serialize fixtures stored in the repository and fail on
+      any incompatible change. The server reports its API version and capabilities at a discovery endpoint.
+    rationale: Desktop clients and a server on a file server are upgraded independently.
+
+  - id: RULE-RSV-008
+    title: Stable Error Contract, No Internal Leakage
+    category: security
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Errors leave the service as a typed body { code: stable_snake_case, message: human text, retry_after_ms?:
+      u64 } with the matching HTTP status / gRPC code. Internal details (SQL, stack traces, server-side paths of
+      collections the caller cannot access) are logged with a request id, never returned. Map domain errors to API
+      errors in exactly one IntoResponse / From impl.
+    rationale: Clients need machine-readable codes; attackers must not learn internals.
+
+  - id: RULE-RSV-009
+    title: Request-Scoped Tracing, Local-Only Telemetry
+    category: observability
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Every request runs in a tracing span with a request id (tower-http TraceLayer + RequestId), the authenticated
+      client id and the route; durations are recorded on the span. Logs go to stderr/journald or a rotating local
+      file. No telemetry, metrics or crash reports are sent to external services; an optional metrics endpoint is
+      off by default and bound to loopback.
+    rationale: Diagnosable in production without leaking personal data off the machine.
+
+  - id: RULE-RSV-010
+    title: Fail-Fast, Validated Configuration
+    category: reliability
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Configuration (file + environment overrides) is parsed into one typed struct at startup with
+      #[serde(deny_unknown_fields)]; invalid or contradictory values abort startup with a message naming the key.
+      The process refuses to start when a secrets file is group- or world-readable. Effective configuration (secrets
+      redacted) is logged once at startup.
+    rationale: A mistyped key that is silently ignored is a latent outage or security hole.
+
+  - id: RULE-RSV-011
+    title: Least Privilege Deployment
+    category: security
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      The service runs as a dedicated unprivileged user. Indexed data roots are mounted/opened read-only; the only
+      writable paths are the state directory and a scratch directory. Ship a systemd unit with
+      NoNewPrivileges=yes, ProtectSystem=strict, ProtectHome=read-only (or explicit ReadOnlyPaths), PrivateTmp=yes,
+      ReadWritePaths=<state dir>, RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6, MemoryMax and CPUQuota/Nice for
+      background work. On Windows: a virtual service account with read access to the configured roots only.
+    rationale: An indexer reads everything; it must not be able to modify anything.
+
+  - id: RULE-RSV-012
+    title: Health, Readiness and Self-Reported Status
+    category: reliability
+    severity: warning
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Expose /healthz (process alive) and /readyz (database open, model available or explicitly degraded) without
+      authentication and without data. Authenticated status endpoints report queue lengths, last error per
+      component and version information so that clients can show an honest state ("waiting for model",
+      "indexing 1,203 of 40,000").
+    rationale: Operators and clients must distinguish "down" from "busy" from "degraded".

@@ -1,0 +1,17 @@
+# Aegis rust-strict.yaml: clippy configuration (RULE-RS-001, -008, -009, -024).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "blocks the async runtime or the UI thread: use tokio::time::sleep, a timer or a condition (RULE-RS-008)" },
+  { path = "std::sync::mpsc::channel", reason = "unbounded queue: use std::sync::mpsc::sync_channel(n) (RULE-RS-009)" },
+  { path = "tokio::sync::mpsc::unbounded_channel", reason = "unbounded queue: use tokio::sync::mpsc::channel(n) (RULE-RS-009)", allow-invalid = true },
+  { path = "crossbeam_channel::unbounded", reason = "unbounded queue: use crossbeam_channel::bounded(n) (RULE-RS-009)", allow-invalid = true },
+  { path = "std::env::set_var", reason = "process-global mutation (RULE-RS-024)" },
+  { path = "std::env::remove_var", reason = "process-global mutation (RULE-RS-024)" },
+  { path = "std::env::set_current_dir", reason = "process-global mutation (RULE-RS-024)" },
+]

@@ -1,0 +1,92 @@
+# Profile: Local-First & Self-Hosted Applications
+# Desktop clients plus an optional self-hosted server (home server, NAS, company file server). The user's data never
+# leaves machines the user controls. No formal safety case; privacy, reliability and operability are paramount.
+
+profile: local-first
+description: >
+  Local-first desktop application with an optional self-hosted server component (e.g. an indexer on a Linux file
+  server and desktop clients on Windows/Linux). Privacy by architecture (no telemetry, no cloud dependency at
+  runtime), robust unattended operation, honest degraded modes, cross-platform desktop integration.
+rigor: none             # No safety integrity level; security & privacy reviews are mandatory instead
+language: rust
+
+# --- Rulesets (Modular Composition) ------------------------------------------
+rulesets:
+  - doc/rules/rust-strict.yaml       # language core (RULE-RS-*)
+  - doc/rules/rust-service.yaml      # server / daemon parts (RULE-RSV-*)
+  - doc/rules/rust-egui.yaml         # desktop UI (RULE-REG-*)
+
+# --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
+quality_axes:
+  functional_suitability: required
+  security:               required      # Personal data on a network: authN/authZ, TLS, least privilege
+  reliability:            required      # Unattended indexing, crash-consistent state, resumable work
+  performance_efficiency: required      # Interactive latency budgets (search-as-you-type), memory budgets
+  interaction_capability: required      # Keyboard-first UI, accessibility, multilingual text
+  compatibility:          required      # Windows + Linux clients, versioned client/server protocol
+  maintainability:        required
+  flexibility:            recommended   # Single-machine and client/server deployments from one code base
+  safety:                 not_applicable
+
+# --- 2. Gate Stages ----------------------------------------------------------
+gate:
+  build:
+    active: true
+  lint:
+    active: true                 # rustfmt + clippy -D warnings + aegis deviation scan
+    fail_on: warning
+  static_analysis:
+    active: true                 # cargo check + rustdoc -D warnings
+  security:
+    active: true                 # cargo-deny (+ cargo-audit when installed)
+    checks: [dependency_audit, license_scan, sources, secrets_scan]
+  tests:
+    active: true
+    levels: [unit, integration, contract, ui_snapshot]
+  coverage:
+    active: true
+    metric: line                 # cargo-llvm-cov on stable; switch to `branch` with a nightly coverage job
+    threshold: 75
+    fail_below: true
+  load_test:
+    active: false                # performance budgets are verified by benchmark tests (TEST-PERF-*) instead
+  traceability:
+    active: true
+    bidirectional: false
+    paths: [crates, apps, tests, xtask]
+    milestones: []               # e.g. [M0, M1]: only these milestones need @implements yet (incremental V-model)
+  deliverables:
+    active: true
+
+# --- 3. Deliverables ---------------------------------------------------------
+deliverables:
+  - server_package               # .deb / .rpm + systemd unit, optional OCI image
+  - client_installers            # Windows MSI/MSIX, Linux AppImage / .deb / Flatpak
+  - api_documentation            # OpenAPI 3.1 of the client/server protocol
+  - dependency_license_report    # cargo-deny / cargo-about output
+  - coverage_report
+  - traceability_matrix
+  - operations_guide             # install, pairing, backup/restore, upgrade, troubleshooting
+  - privacy_statement            # what leaves the machine (nothing at runtime) and why
+  - changelog
+
+# --- 4. Coding Constraints (Strict Directives for the Implementation Model) --
+coding_constraints:
+  - No network traffic except between the product's own clients and servers, plus explicitly user-triggered model downloads from pinned URLs verified by SHA-256.
+  - No telemetry, analytics, crash upload or remote logging of any kind.
+  - Every persistent state change is transactional; killing any process at any time must leave resumable state.
+  - Every queue, cache and buffer is bounded; every network and child-process operation has a timeout.
+  - The UI thread and async runtimes never block (see RULE-RS-008, RULE-REG-001).
+  - Platform-specific code lives only in platform modules behind traits (RULE-RS-022).
+  - Every @implements annotation must state the REQ-ID of the realized requirement.
+
+# --- 5. Agent Instructions Fragment -----------------------------------------
+agent_instructions: |
+  TARGET PLATFORM: Local-first desktop application (egui, Windows + Linux) with a self-hosted Rust server.
+  The user's data never leaves machines the user controls: do not add telemetry, cloud services or any network
+  call that is not part of the product's own client/server protocol or an explicit, pinned model download.
+  Write safe Rust (edition 2024): no panics on production paths, typed errors (thiserror) in libraries, unsafe only
+  in the designated -sys crate with // SAFETY: proofs, bounded queues, no blocking in async code or in the egui
+  frame function. All protocol types come from the shared protocol crate; keep API changes additive. Annotate every
+  implemented requirement with `@implements REQ-XXX` and every test with `/// @verifies TEST-XXX`.
+  When a requirement is ambiguous, stop and report the ambiguity instead of guessing.
