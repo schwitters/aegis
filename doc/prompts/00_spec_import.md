@@ -42,13 +42,16 @@ GROUND RULES
 - Never modify tools/aegis. Never run `aegis baseline --approve` or `aegis tests freeze` (human decisions).
 
 1. ADD AEGIS
-1.1 git submodule add https://github.com/schwitters/aegis.git tools/aegis
+1.1 git submodule add <AEGIS_GIT_URL> tools/aegis — skip if tools/aegis already exists
     (record the pinned commit: git -C tools/aegis rev-parse HEAD).
 1.2 cargo build --release --manifest-path tools/aegis/Cargo.toml; alias aegis=tools/aegis/target/release/aegis.
-1.3 Choose the profile from the specification — web-enterprise | enterprise | local-first | embedded-safety — and for
-    web-enterprise the frontend overlays (none | rust-web-htmx | rust-web-pwa). Justify the choice in one paragraph.
-    Then: aegis init --profile <profile> --lang <lang> [--name <project-name>]
-    and enable the chosen overlays under `rulesets:` in doc/profile.yaml. If a Cargo workspace existed before, add
+1.3 Use the profile, overlays and project name the user gave you. Only if none were given, choose them from the
+    specification — web-enterprise | enterprise | local-first | embedded-safety, for web-enterprise the frontend
+    overlays none | rust-web-htmx | rust-web-pwa — and justify the choice in one paragraph. Then:
+      aegis init --profile <profile> --lang <lang> [--name <project-name>]
+    (profiles init does not scaffold, e.g. local-first: run init with --profile enterprise, then copy
+    tools/aegis/doc/<profile>.yaml to doc/profile.yaml and every ruleset it lists from tools/aegis/doc/rules/ to
+    doc/rules/). Enable the overlays under `rulesets:` in doc/profile.yaml. If a Cargo workspace existed before, add
     "tools/aegis" to its `exclude` list.
 1.4 In doc/profile.yaml set gate.traceability.spec: required.
 1.5 Read completely: tools/aegis/doc/dev-workflow.md, tools/aegis/doc/prompts/01, 03, 04, 04b and 08,

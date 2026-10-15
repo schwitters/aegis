@@ -15,6 +15,73 @@
 
 ---
 
+## 🚀 Start Here: From a Specification to Working Software
+
+You hand a coding agent exactly three things — everything else is in this repository:
+
+| Input | What it is |
+|---|---|
+| **`spec/`** | Your specification as Markdown documents (any structure, any number of files) in the target repository. It stays untouched; every derived artifact cites its section (`source: spec/<file>.md#<anchor>`). |
+| **Profile** | The domain rigor (see below), plus optional overlays and a project name. |
+| **Aegis git URL** | `https://github.com/schwitters/aegis.git` — added as a submodule at `tools/aegis`. |
+
+| Profile | For | Overlays |
+|---|---|---|
+| `web-enterprise` | Rust web applications (Axum, SQLx/SQLite), layered workspace, ASVS L2, GDPR, four handbooks | `rust-web-htmx` (htmx frontend) or `rust-web-pwa` (installable/offline frontend); none for server-rendered or SPA |
+| `enterprise` | Backend services (Java/Rust/C++), maintainability and security focus | — |
+| `local-first` | Desktop clients with optional self-hosted server, privacy by architecture | — |
+| `embedded-safety` | Safety-critical firmware (ISO 26262, ASIL-D, MC/DC) | — |
+
+### Step 1 — Aegis integration (frontier model with shell access)
+
+```text
+Bring this repository under the Aegis process.
+- Specification: spec/   (never edit it)
+- Profile: web-enterprise   Overlays: rust-web-pwa   Project name: myshop
+- Aegis: https://github.com/schwitters/aegis.git
+
+Add Aegis as a git submodule at tools/aegis and build it. Then read tools/aegis/doc/prompts/00_spec_import.md and
+execute "Run 1" exactly as written, using the profile, overlays and project name above. Stop where Run 1 says STOP
+and report the command outputs verbatim.
+```
+
+The agent adds Aegis, scaffolds the project (`aegis init`), translates `spec/` into requirements, architecture, use
+cases and test plan under `doc/`, and proves completeness deterministically (`aegis spec check`, `aegis trace`).
+
+**You:** let a *different* model review the artifacts blindly ([Prompt 02](doc/prompts/02_blind_spec_review.md), one
+review record per stage), disposition the findings, then approve: `tools/aegis/target/release/aegis baseline --approve <your-name>`.
+
+### Step 2 — Tests and work packets (same or another frontier model)
+
+```text
+The baseline is approved. Read tools/aegis/doc/prompts/00_spec_import.md and execute "Run 2" up to its first STOP.
+```
+
+**You:** review the tests (they must fail against stubs), then freeze them: `tools/aegis/target/release/aegis tests freeze`.
+
+```text
+The tests are frozen. Continue "Run 2" of tools/aegis/doc/prompts/00_spec_import.md from step 5.
+```
+
+`aegis tasks` now generates one self-contained packet per requirement in `doc/tasks/`, ordered by architecture layer.
+
+### Step 3 — Implementation (weaker / local model in an agent harness)
+
+```text
+Read AGENT_INSTRUCTIONS.md and doc/tasks/README.md. Work through the task queue in order, one TASK file at a time,
+exactly as the file describes: implement, run its fast-gate command, fix, and stop with an escalation report when
+its iteration limit is reached. Never edit doc/, the frozen tests or tools/aegis.
+```
+
+Configure the harness guardrails listed at the end of `doc/tasks/README.md` first. Then: full gate
+(`aegis gate --profile doc/profile.yaml --skip reviews`), final review of the green diff by a frontier model
+([Prompt 07](doc/prompts/07_final_review.md)), acceptance gate (`aegis gate --profile doc/profile.yaml`).
+
+**Your decisions in the whole flow:** profile choice · blind reviews dispositioned · `baseline --approve` · test
+review + `tests freeze` · escalations · final review. Everything else is generated or checked by Aegis.
+
+---
+
 ## 🌟 Overview
 
 **Aegis** bridges formal systems engineering (V-Model, Clean-Room Software Engineering, ISO 26262, DO-178C, ISO/IEC 25010) with modern agentic AI coding.
