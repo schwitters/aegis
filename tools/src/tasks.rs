@@ -342,6 +342,18 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
                 body
             ));
         }
+        // Source material: what the requirement, its use cases and architecture cite in spec/ (open these files)
+        let mut sources: BTreeSet<String> = BTreeSet::new();
+        for id in std::iter::once(req).chain(ucs.iter()).chain(archs.iter()) {
+            sources.extend(trace.sources.get(id).cloned().unwrap_or_default());
+        }
+        if !sources.is_empty() {
+            b.push_str("## Source Material (spec/, read-only)\n\n");
+            for s in &sources {
+                b.push_str(&format!("- `{}`\n", s));
+            }
+            b.push('\n');
+        }
         b.push_str(&tests_section(&tests));
         let crate_dirs: Vec<PathBuf> = archs
             .iter()

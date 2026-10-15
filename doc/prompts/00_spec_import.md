@@ -58,9 +58,13 @@ GROUND RULES
     doc/profile.yaml and every ruleset it lists.
 
 2. TRANSLATE
-2.1 aegis spec sections > /tmp/sections.txt — the complete list of citable sections. Read every file in spec/.
-    Markdown files are cited per heading (spec/<file>.md#<anchor>); every other file (OpenAPI, JSON Schema,
-    diagrams) is one citable unit (spec/<file>) and must be cited or excepted like a section.
+2.1 aegis spec sections > /tmp/sections.txt — the complete list of citable units. Read EVERY file in spec/, whatever
+    its type: Markdown, OpenAPI/JSON Schema, UI prototypes (HTML, exported screens), images and diagrams (look at
+    them), PDFs, spreadsheets. Markdown is cited per heading (spec/<file>.md#<anchor>); every other file is one
+    unit (spec/<file>); a multi-file prototype may be cited as a whole directory (spec/ui/prototype/ — covers all
+    non-Markdown files below it). UI prototypes become use cases (screens, flows, states, validation messages) and
+    interaction/accessibility requirements, cited to the prototype. A file you cannot read (e.g. a proprietary .fig
+    or an encrypted PDF): open an issue and add an exception with `issue:` — never skip it silently.
 2.2 doc/001_initial_spec.md: consolidated specification in the structure of Prompt 01 (all nine ISO/IEC 25010 axes as
     Required/Recommended/N/A with rationale; scope and explicit non-goals; open questions = the issues you created).
 2.3 doc/requirements/REQ-<AREA>-NNN.md: atomic, testable, one obligation each; frontmatter id, title, status: draft,

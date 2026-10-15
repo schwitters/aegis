@@ -25,7 +25,7 @@ You hand the coding agent exactly three things — everything else is in this re
 
 | Input | What it is |
 |---|---|
-| **`spec/`** | Your specification files in the target repository: Markdown documents (any structure, any number) plus optional machine-readable files such as `openapi.yaml`, JSON Schemas or diagrams. It stays untouched; every derived artifact cites its source (`source: spec/<file>.md#<anchor>` or `spec/openapi.yaml`), and `aegis spec check` proves that every section and every file is covered. |
+| **`spec/`** | Everything that describes the product, in the target repository: Markdown documents (any structure, any number), OpenAPI/JSON Schemas, UI prototypes (HTML, screen exports), images, diagrams, PDFs. It stays untouched and is read completely: every derived artifact cites its source (`spec/<file>.md#<anchor>`, `spec/openapi.yaml`, or a prototype directory `spec/ui/prototype/`), and `aegis spec check` proves that every section and every file is covered — or listed as an exception with a reason or an issue. |
 | **Profile** | The domain rigor (see below), plus optional overlays and a project name. |
 | **Aegis git URL** | `https://github.com/schwitters/aegis.git` — added as a submodule at `tools/aegis`. |
 
@@ -50,12 +50,15 @@ When I say "write it", produce:
 - spec/03-quality.md       measurable non-functional requirements (ISO/IEC 25010 axes), security, privacy
 - spec/04-architecture.md  technology choices and constraints, external systems, data model sketch
 - spec/openapi.yaml        OpenAPI 3.1 contract of the JSON API (if there is one)
+- spec/ui/                 UI prototype (static HTML/CSS per screen) or screen sketches, if we designed screens
 - spec/99-open-questions.md everything still undecided
 Use one heading per topic (headings become citable anchors) and never invent numbers — list them as open questions.
 ```
 
-Save the files under `spec/` in a new (or existing) repository and commit them. The headings matter: each one
-becomes a section that a requirement, architecture element or use case must cite.
+Save the files under `spec/` in a new (or existing) repository and commit them — add anything else that describes
+the product (prototypes from a design tool, screenshots, PDFs). The headings matter: each Markdown heading, each
+other file and each prototype directory becomes a unit that a requirement, architecture element or use case must
+cite. Work packets later list these sources, so the implementing model can open the prototype of its screen.
 
 ### Step 1 — Aegis integration (frontier model with shell access)
 

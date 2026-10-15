@@ -108,14 +108,15 @@ pub fn parse_sections(file: &str, content: &str) -> Vec<Section> {
 }
 
 /// Reads `spec_root` into the trace (`spec_sections`, `spec_files`): Markdown documents by heading, every other file
-/// (OpenAPI, JSON Schema, diagrams, …) as one section keyed by its path, so nothing in spec/ escapes coverage.
+/// (OpenAPI, JSON Schema, UI prototypes, images, PDFs, …) as one section keyed by its path — hidden files included,
+/// only empty placeholders (0 bytes, e.g. .gitkeep) are skipped — so nothing in spec/ escapes coverage.
 pub fn collect_spec(root: &Path, spec_root: &Path, trace: &mut Trace) -> Result<()> {
     trace.spec_scanned = true;
     let mut files: Vec<_> = WalkDir::new(spec_root)
         .into_iter()
         .filter_map(|e| e.ok())
         .map(|e| e.into_path())
-        .filter(|p| p.is_file() && !p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false))
+        .filter(|p| p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(true))
         .collect();
     files.sort();
     if files.is_empty() {
@@ -143,12 +144,19 @@ pub fn collect_spec(root: &Path, spec_root: &Path, trace: &mut Trace) -> Result<
 }
 
 /// Citations that do not resolve, and REQ/ARCH/UC without any citation. Part of `find_problems` once spec/ is read.
+/// A directory citation (`spec/ui/prototype/`) covers every non-Markdown file below it.
+fn dir_covers(dir: &str, file: &str) -> bool {
+    dir.ends_with('/') && file.starts_with(dir) && !file.ends_with(".md")
+}
+
 pub fn citation_problems(trace: &Trace) -> Vec<String> {
     let mut problems = Vec::new();
     let files: BTreeSet<String> = trace.spec_files.keys().map(|k| k.trim_start_matches("SPEC:").to_string()).collect();
     for (id, sources) in &trace.sources {
         for s in sources {
-            let resolves = trace.spec_sections.contains_key(s) || (!s.contains('#') && files.contains(s));
+            let resolves = trace.spec_sections.contains_key(s)
+                || (!s.contains('#') && files.contains(s))
+                || files.iter().any(|f| dir_covers(s, f));
             if !resolves {
                 problems.push(format!("INVALID  {}: source `{}` does not resolve to a spec file/heading", id, s));
             }
@@ -188,6 +196,11 @@ pub fn coverage_problems(trace: &Trace, exceptions: &Exceptions, issue_ids: &BTr
     let mut problems = Vec::new();
     let cited = citations(trace);
     let mut covered: BTreeSet<String> = BTreeSet::new();
+    for s in trace.spec_sections.values() {
+        if cited.keys().any(|c| dir_covers(c, &s.key)) {
+            covered.insert(s.key.clone());
+        }
+    }
     for key in cited.keys() {
         let mut cur = Some(key.clone());
         while let Some(k) = cur {
@@ -243,7 +256,14 @@ pub fn render_report(trace: &Trace, exceptions: &Exceptions) -> String {
     ordered.sort_by_key(|s| s.order);
     for s in ordered {
         let indent = "&nbsp;&nbsp;".repeat(s.level.saturating_sub(1));
-        let cell = match (cited.get(&s.key), exc.get(s.key.as_str())) {
+        let via_dir: BTreeSet<String> = cited
+            .iter()
+            .filter(|(c, _)| dir_covers(c, &s.key))
+            .flat_map(|(_, ids)| ids.iter().cloned())
+            .collect();
+        let direct = cited.get(&s.key).cloned().unwrap_or_default();
+        let all: BTreeSet<String> = direct.union(&via_dir).cloned().collect();
+        let cell = match (if all.is_empty() { None } else { Some(&all) }, exc.get(s.key.as_str())) {
             (Some(ids), _) => ids.iter().cloned().collect::<Vec<_>>().join(", "),
             (None, Some(e)) => match (&e.issue, &e.reason) {
                 (Some(i), _) => format!("open ({})", i),

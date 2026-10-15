@@ -696,6 +696,11 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         write(&root, "spec/nfr.md", "# Quality\n## Performance\n");
         write(&root, "spec/api/openapi.yaml", "openapi: 3.1.0\n");
         write(&root, "spec/diagram.png", "\u{89}PNG binary");
+        write(&root, "spec/ui/prototype/index.html", "<h1>Login</h1>");
+        write(&root, "spec/ui/prototype/app.css", "body{}");
+        write(&root, "spec/ui/prototype/.keep", "");
+        write(&root, "spec/.notes", "hidden but not empty");
+        write(&root, "doc/usecases/UC-009.md", "---\nid: UC-009\nimplements: [REQ-001]\nsource: [spec/ui/prototype/, spec/ui/missing/]\n---\n");
         // REQ-001 cites a section; ARCH and UC cite nothing / something broken
         write(&root, "doc/requirements/REQ-001.md", "---\nid: REQ-001\ntitle: Login\nsource: [spec/product.md#login]\n---\n");
         write(&root, "doc/usecases/UC-001.md", "---\nid: UC-001\nimplements: [REQ-001]\nsource: spec/product.md#logn\n---\n");
@@ -714,6 +719,10 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         assert!(has(&cov, "UNCOVERED spec/product.md#reporting"), "{:#?}", cov);
         assert!(has(&cov, "UNCOVERED spec/api/openapi.yaml"), "non-Markdown spec files need a citation too");
         assert!(has(&cov, "UNCOVERED spec/diagram.png"));
+        assert!(!has(&cov, "spec/ui/prototype/index.html") && !has(&cov, "spec/ui/prototype/app.css"), "directory citation covers the prototype");
+        assert!(!has(&cov, ".keep"), "empty placeholders are skipped");
+        assert!(has(&cov, "UNCOVERED spec/.notes"), "hidden files are read too");
+        assert!(has(&problems, "UC-009: source `spec/ui/missing/` does not resolve"), "{:#?}", problems);
         assert!(!has(&cov, "UNCOVERED spec/product.md#product"), "parent covered through its cited child");
         assert!(!has(&cov, "spec/product.md#history\""), "excepted");
         assert!(has(&cov, "references ISSUE-0042, which does not exist"));

@@ -149,7 +149,7 @@ pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
         }
         if let Some(file) = up.strip_prefix("SPEC:") {
             for (id, sources) in &trace.sources {
-                if sources.iter().any(|s| s == file || s.starts_with(&format!("{}#", file))) {
+                if sources.iter().any(|s| s == file || s.starts_with(&format!("{}#", file)) || (s.ends_with('/') && file.starts_with(s.as_str()))) {
                     problems.push(format!("SUSPECT  {}: cites {}, which changed since baseline", id, file));
                 }
             }
