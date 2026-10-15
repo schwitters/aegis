@@ -6,6 +6,7 @@ A standardized collection of copy-pasteable prompt templates for orchestrating t
 
 | Stage | Prompt Template | Executing Model | Primary Output |
 |---|---|---|---|
+| **0. Spec Import** (alternative to 1–3) | [`00_spec_import.md`](00_spec_import.md) | Frontier model with shell, two runs | Aegis submodule, `doc/` artifacts with `source:` citations, frozen tests, `doc/tasks/` via `aegis tasks` |
 | **1. Ideation** | [`01_ideation_to_spec.md`](01_ideation_to_spec.md) | Frontier Model A | `doc/001_initial_spec.md` |
 | **2. Spec Review** | [`02_blind_spec_review.md`](02_blind_spec_review.md) | Frontier Model B (Blind) | Review Findings & Risk Analysis |
 | **3. Derivation** | [`03_spec_to_requirements.md`](03_spec_to_requirements.md) | Frontier Model A | `doc/requirements/`, `doc/architecture/`, `doc/usecases/` |

@@ -69,6 +69,7 @@ File: `doc/architecture/ARCH-001.md`
 ---
 id: ARCH-001
 title: <Component Name>
+crate: <project>-<layer>   # Rust workspaces: the layer crate (aegis tasks derives order and scope from it)
 satisfies: [REQ-001, REQ-004]
 ---
 ```

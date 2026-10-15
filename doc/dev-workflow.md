@@ -20,6 +20,8 @@ The process is fundamentally a **V-Model with AI agents as executors**: The desc
 
 ## Workflow Pipeline
 
+> Existing specification in `spec/`? Start with [Prompt 00](prompts/00_spec_import.md) instead of steps 1–3: artifacts cite their spec sections (`source:`), `aegis spec check` proves complete coverage, `spec/` files are part of the baseline (a changed spec file marks the citing artifacts `SUSPECT`), and `aegis tasks` generates the work packets for the implementation model.
+
 1. **Ideation** — Collaborative discussion of a product idea and scope with Frontier Model A; output is `doc/001_initial_spec.md`.
 2. **Spec Review** — Independent, blind review of the spec with a second Frontier Model B (and optionally local uncensored models). Every review is recorded as `doc/reviews/REVIEW-xxxx.md` (see *Review Records*). Findings are dispositioned until the specification is solid.
 3. **Artifact Derivation** — From the approved specification, Model A derives:

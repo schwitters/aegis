@@ -190,7 +190,15 @@ aegis review create --stage architecture --artifact doc/architecture/ARCH-001.md
 aegis review check --required spec architecture:2
 ```
 
-### 6. Implementation Loop & Quality Gate
+### 6. Import an Existing Specification, Generate Work Packets
+
+```bash
+aegis spec sections            # citable anchors of spec/*.md
+aegis spec check               # every section cited (source:) or excepted; writes doc/spec-coverage.md
+aegis tasks --profile doc/profile.yaml   # doc/tasks/TASK-*.md in layer order (needs baseline + frozen tests)
+```
+
+### 7. Implementation Loop & Quality Gate
 
 ```bash
 # Synthesize AGENT_INSTRUCTIONS.md (incl. loop protocol) for the implementation model

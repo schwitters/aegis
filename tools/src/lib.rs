@@ -10,6 +10,8 @@ pub mod issue;
 pub mod profile;
 pub mod review;
 pub mod rulesets;
+pub mod spec;
+pub mod tasks;
 pub mod testfreeze;
 pub mod traceability;
 
@@ -666,6 +668,132 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         }
         let legal = std::fs::read_to_string(root.join("docs/collect-legal.sh")).unwrap();
         assert!(legal.contains("crates/shop-server/"), "slug substituted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_spec_sections_and_anchors() {
+        assert_eq!(spec::slug("3.2 Login & Sessions (MVP)"), "32-login--sessions-mvp");
+        assert_eq!(spec::slug("Use `TenantScope` [here](x.md)"), "use-tenantscope-here");
+        let md = "# Product\n\n## Goals\n\n```\n# not a heading\n```\n## Goals\n### Sub *goal*\n# Annex\n";
+        let s = spec::parse_sections("spec/p.md", md);
+        let keys: Vec<&str> = s.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(keys, vec!["spec/p.md#product", "spec/p.md#goals", "spec/p.md#goals-1", "spec/p.md#sub-goal", "spec/p.md#annex"]);
+        assert_eq!(s[3].parent.as_deref(), Some("spec/p.md#goals-1"));
+        assert_eq!(s[4].parent, None);
+        assert_eq!(spec::parse_sections("spec/plain.md", "no headings")[0].key, "spec/plain.md");
+    }
+
+    #[test]
+    fn test_spec_coverage_citations_and_suspects() {
+        let root = temp_root("spec_cov");
+        full_chain(&root);
+        write(&root, "spec/product.md", "# Product\n## Login\n## Reporting\n## History\n");
+        write(&root, "spec/nfr.md", "# Quality\n## Performance\n");
+        // REQ-001 cites a section; ARCH and UC cite nothing / something broken
+        write(&root, "doc/requirements/REQ-001.md", "---\nid: REQ-001\ntitle: Login\nsource: [spec/product.md#login]\n---\n");
+        write(&root, "doc/usecases/UC-001.md", "---\nid: UC-001\nimplements: [REQ-001]\nsource: spec/product.md#logn\n---\n");
+        write(&root, "doc/spec-coverage.yaml", "exceptions:\n  - section: spec/product.md#history\n    reason: document history\n  - section: spec/nfr.md#quality\n    issue: ISSUE-0042\n  - section: spec/product.md#nope\n    reason: x\n");
+        let trace = traceability::collect_project(&root, &root.join("doc"), Some(&[root.join("src"), root.join("tests")])).unwrap();
+        assert!(trace.spec_scanned);
+        let (rows, _, _) = traceability::build_rows(&trace);
+        let problems = traceability::find_problems(&trace, &rows);
+        let has = |ps: &Vec<String>, needle: &str| ps.iter().any(|p| p.contains(needle));
+        assert!(has(&problems, "UC-001: source `spec/product.md#logn` does not resolve"), "{:#?}", problems);
+        assert!(has(&problems, "UNSOURCED ARCH-001"));
+        assert!(!has(&problems, "UNSOURCED REQ-001"));
+        assert!(!has(&problems, "UNSOURCED TEST"), "tests need no source");
+
+        let cov = spec::coverage_problems(&trace, &spec::load_exceptions(&root.join("doc")).unwrap(), &Default::default(), 3);
+        assert!(has(&cov, "UNCOVERED spec/product.md#reporting"), "{:#?}", cov);
+        assert!(!has(&cov, "UNCOVERED spec/product.md#product"), "parent covered through its cited child");
+        assert!(!has(&cov, "spec/product.md#history\""), "excepted");
+        assert!(has(&cov, "references ISSUE-0042, which does not exist"));
+        assert!(has(&cov, "exception for unknown section `spec/product.md#nope`"));
+        assert!(!has(&cov, "UNCOVERED spec/nfr.md#performance"), "covered by the exception of its parent");
+        assert!(!baseline::blocking_for_approval(&cov).is_empty(), "uncovered spec blocks approval");
+        let report = spec::render_report(&trace, &spec::load_exceptions(&root.join("doc")).unwrap());
+        assert!(report.contains("| `spec/product.md#login` |") && report.contains("REQ-001"));
+
+        // a changed spec file marks the artifacts citing it SUSPECT
+        let b = baseline::Baseline { approved_by: None, approved_at: None, artifacts: baseline::current(&root, &trace).unwrap() };
+        assert!(b.artifacts.contains_key("SPEC:spec/product.md"));
+        write(&root, "spec/product.md", "# Product\n## Login\nnow with SSO\n## Reporting\n## History\n");
+        let trace = traceability::collect_project(&root, &root.join("doc"), None).unwrap();
+        let d = baseline::diff(&b, &baseline::current(&root, &trace).unwrap());
+        let suspects = baseline::check(&trace, &d);
+        assert!(has(&suspects, "SUSPECT  REQ-001: cites spec/product.md"), "{:#?}", suspects);
+        assert!(has(&suspects, "UNREVIEWED SPEC:spec/product.md"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    const TASK_PROFILE: &str = "profile: t\nlanguage: rust\ncoding_constraints: [\"Use typed errors.\"]\n\
+gate:\n  architecture:\n    layers:\n      domain: []\n      api: [domain]\n      tests: [\"*\"]\n\
+agent_loop:\n  max_iterations: 2\n  fast_stages: [build, tests]\n";
+
+    fn task_project(root: &std::path::Path) {
+        full_chain(root);
+        write(root, "doc/architecture/ARCH-001.md", "---\nid: ARCH-001\ntitle: Auth domain\ncrate: shop-domain\nsatisfies: [REQ-001]\n---\nOwns credentials. See RULE-RS-001.\n");
+        write(root, "doc/requirements/REQ-002.md", "---\nid: REQ-002\ntitle: Login endpoint\n---\nPOST /login returns 204.\n");
+        write(root, "doc/architecture/ARCH-002.md", "---\nid: ARCH-002\ntitle: HTTP\ncrate: shop-api\nsatisfies: [REQ-002]\n---\nAxum routes.\n");
+        write(root, "doc/usecases/UC-002.md", "---\nid: UC-002\nimplements: [REQ-002]\n---\n");
+        write(root, "doc/testplan/TEST-003.md", "---\nid: TEST-003\ntitle: login 204\nverifies: [REQ-002]\n---\n");
+        write(root, "tests/api_test.rs", "/// @verifies TEST-003\n#[test]\nfn login_returns_204() {}\n");
+        write(root, "src/api.rs", "/// @implements REQ-002\nfn login() {}\n");
+        write(root, "doc/profile.yaml", TASK_PROFILE);
+    }
+
+    #[test]
+    fn test_tasks_require_baseline_and_frozen_tests() {
+        let root = temp_root("tasks_pre");
+        task_project(&root);
+        let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+        let r = tasks::generate(&root, &prof, "doc/profile.yaml", 6000, false).unwrap();
+        assert_eq!(r.tasks, 0);
+        assert!(r.problems.iter().any(|p| p.contains("no approved baseline")), "{:?}", r.problems);
+        assert!(r.problems.iter().any(|p| p.contains("tests.lock missing")));
+        assert!(!root.join("doc/tasks").exists(), "nothing written without approval");
+
+        let r = tasks::generate(&root, &prof, "doc/profile.yaml", 6000, true).unwrap();
+        assert!(r.tasks > 0);
+        assert!(std::fs::read_to_string(root.join("doc/tasks/TASK-REQ-001.md")).unwrap().contains("**DRAFT**"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_tasks_generate_ordered_self_contained_packets() {
+        let root = temp_root("tasks_gen");
+        task_project(&root);
+        let (trace, _) = trace_of(&root);
+        let b = baseline::Baseline { approved_by: Some("t".into()), approved_at: None, artifacts: baseline::current(&root, &trace).unwrap() };
+        baseline::write(&root.join("doc"), &b).unwrap();
+        testfreeze::freeze(&root, &root.join("doc"), &[root.join("src"), root.join("tests")]).unwrap();
+        let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+
+        let r = tasks::generate(&root, &prof, "doc/profile.yaml", 6000, false).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.tasks, 3, "two requirements + one ARCH integration packet");
+        let readme = std::fs::read_to_string(root.join("doc/tasks/README.md")).unwrap();
+        let pos = |s: &str| readme.find(s).unwrap();
+        assert!(pos("TASK-REQ-001") < pos("TASK-REQ-002"), "domain before api");
+        assert!(pos("TASK-REQ-002") < pos("TASK-ARCH-001"), "integration last");
+
+        let t1 = std::fs::read_to_string(root.join("doc/tasks/TASK-REQ-001.md")).unwrap();
+        assert!(t1.contains("crate `shop-domain`, layer `domain`"));
+        assert!(t1.contains("`a` (tests/auth_test.rs)"), "frozen test function named: {}", t1);
+        assert!(t1.contains("RULE-RS-001"), "rule mentioned in ARCH is listed");
+        assert!(t1.contains("Use typed errors."));
+        assert!(t1.contains("aegis gate --profile doc/profile.yaml --only build,tests"));
+        assert!(t1.contains("at most **2 runs**"));
+        assert!(t1.contains("`crates/shop-domain/`"));
+        let t2 = std::fs::read_to_string(root.join("doc/tasks/TASK-REQ-002.md")).unwrap();
+        assert!(t2.contains("`login_returns_204` (tests/api_test.rs)"));
+
+        // stale packets are replaced, oversize packets are reported
+        write(&root, "doc/tasks/TASK-REQ-999.md", "old");
+        let r = tasks::generate(&root, &prof, "doc/profile.yaml", 50, false).unwrap();
+        assert!(!root.join("doc/tasks/TASK-REQ-999.md").exists());
+        assert!(r.problems.iter().any(|p| p.starts_with("OVERSIZE TASK-REQ-001")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

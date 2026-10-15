@@ -25,6 +25,14 @@ pub struct Trace {
     pub doc_refs: BTreeMap<String, Vec<(String, String)>>,
     /// True once a documentation tree was scanned: only then is UC documentation coverage enforced
     pub documentation_scanned: bool,
+    /// Artifact ID -> `source:` citations into spec/ (`spec/<file>.md#<anchor>`)
+    pub sources: BTreeMap<String, Vec<String>>,
+    /// Sections of the specification documents (key `spec/<file>.md#<anchor>`)
+    pub spec_sections: BTreeMap<String, crate::spec::Section>,
+    /// `SPEC:<path>` -> file, for baselines
+    pub spec_files: BTreeMap<String, PathBuf>,
+    /// True once spec/ was read: citations are then checked
+    pub spec_scanned: bool,
 }
 
 /// Root of the delivered documentation (one MkDocs site per handbook); `doc/` holds the process artifacts.
@@ -233,6 +241,22 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
                 continue;
             }
             trace.artifacts.insert(id_val.clone(), path.clone());
+            match map.get(serde_yaml::Value::String("source".to_string())) {
+                None | Some(serde_yaml::Value::Null) => {}
+                Some(serde_yaml::Value::String(s)) => {
+                    trace.sources.insert(id_val.clone(), vec![s.trim().to_string()]);
+                }
+                Some(serde_yaml::Value::Sequence(seq)) => {
+                    let list: Vec<String> = seq.iter().filter_map(|v| v.as_str()).map(|s| s.trim().to_string()).collect();
+                    if list.len() != seq.len() {
+                        trace.doc_errors.push(format!("INVALID  {}: `source` entries must be strings", id_val));
+                    }
+                    trace.sources.insert(id_val.clone(), list);
+                }
+                Some(other) => trace
+                    .doc_errors
+                    .push(format!("INVALID  {}: `source` must be a string or a list, got {:?}", id_val, other)),
+            }
 
             match expected_prefix {
                 "REQ-" => {
@@ -325,6 +349,25 @@ pub fn collect_documentation(docs_root: &Path, trace: &mut Trace) -> Result<()> 
         }
     }
     Ok(())
+}
+
+/// Reads everything a trace needs: doc/ artifacts, optionally source annotations, and — when present — the
+/// handbooks under docs/ and the specification under spec/.
+pub fn collect_project(root: &Path, doc_dir: &Path, src_dirs: Option<&[PathBuf]>) -> Result<Trace> {
+    let mut trace = Trace::default();
+    collect_docs(doc_dir, &mut trace)?;
+    if let Some(dirs) = src_dirs {
+        collect_code(dirs, &mut trace)?;
+    }
+    let docs_root = root.join(DOCS_DIR);
+    if docs_root.exists() {
+        collect_documentation(&docs_root, &mut trace)?;
+    }
+    let spec_root = root.join(crate::spec::SPEC_DIR);
+    if spec_root.exists() {
+        crate::spec::collect_spec(root, &spec_root, &mut trace)?;
+    }
+    Ok(trace)
 }
 
 pub const SOURCE_EXTENSIONS: [&str; 10] = ["py", "js", "ts", "go", "rs", "java", "c", "cpp", "h", "hpp"];
@@ -565,7 +608,12 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
         }
     }
 
-    // 5. Orphaned @verifies in code
+    // 5. Citations into spec/ resolve; REQ/ARCH/UC are sourced
+    if trace.spec_scanned {
+        problems.extend(crate::spec::citation_problems(trace));
+    }
+
+    // 6. Orphaned @verifies in code
     for (t, locs) in &trace.test_annot {
         if !known_tests.contains(t) {
             let loc = locs.first().map(|s| s.as_str()).unwrap_or("unknown");

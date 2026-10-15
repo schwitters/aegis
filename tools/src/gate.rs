@@ -6,7 +6,7 @@ use crate::profile::Profile;
 use crate::review;
 use crate::rulesets::{self, RulesetFile};
 use crate::testfreeze;
-use crate::traceability::{self, Trace};
+use crate::traceability;
 use anyhow::{bail, Result};
 use colored::Colorize;
 use regex::Regex;
@@ -777,24 +777,20 @@ impl GateRunner {
         let doc_dir = self.root.join("doc");
         let src_dirs = self.profile.source_paths(&self.root);
 
-        let mut trace = Trace::default();
-        if let Err(e) = traceability::collect_docs(&doc_dir, &mut trace) {
-            return StageResult::NotExecutable(format!("Failed to read doc/: {}", e));
+        let mut trace = match traceability::collect_project(&self.root, &doc_dir, Some(&src_dirs)) {
+            Ok(t) => t,
+            Err(e) => return StageResult::NotExecutable(format!("Failed to read project: {:#}", e)),
+        };
+        let tcfg = self.profile.get_stage_config("traceability");
+        let docs_required = tcfg.and_then(|c| c.documentation.as_deref()) == Some("required");
+        let spec_required = tcfg.and_then(|c| c.spec.as_deref()) == Some("required");
+        if spec_required && !trace.spec_scanned {
+            trace.doc_errors.push(format!(
+                "INVALID  specification required by profile, but {}/ does not exist",
+                crate::spec::SPEC_DIR
+            ));
         }
-        if let Err(e) = traceability::collect_code(&src_dirs, &mut trace) {
-            return StageResult::NotExecutable(format!("Failed to scan source code: {}", e));
-        }
-        let docs_root = self.root.join(traceability::DOCS_DIR);
-        let docs_required = self
-            .profile
-            .get_stage_config("traceability")
-            .and_then(|c| c.documentation.as_deref())
-            == Some("required");
-        if docs_root.exists() {
-            if let Err(e) = traceability::collect_documentation(&docs_root, &mut trace) {
-                return StageResult::NotExecutable(format!("Failed to scan docs/: {}", e));
-            }
-        } else if docs_required {
+        if !self.root.join(traceability::DOCS_DIR).exists() && docs_required {
             trace.doc_errors.push(format!(
                 "INVALID  documentation required by profile, but {}/ does not exist",
                 traceability::DOCS_DIR
@@ -803,6 +799,18 @@ impl GateRunner {
 
         let (rows, _, _) = traceability::build_rows(&trace);
         let mut problems = traceability::find_problems(&trace, &rows);
+        if trace.spec_scanned {
+            let issue_ids: BTreeSet<String> = issue::collect_issues(&doc_dir)
+                .map(|is| is.into_iter().map(|i| i.meta.id).collect())
+                .unwrap_or_default();
+            match crate::spec::load_exceptions(&doc_dir) {
+                Ok(exc) => {
+                    problems.extend(crate::spec::coverage_problems(&trace, &exc, &issue_ids, crate::spec::DEFAULT_DEPTH));
+                    let _ = std::fs::write(doc_dir.join(crate::spec::REPORT_FILE), crate::spec::render_report(&trace, &exc));
+                }
+                Err(e) => problems.push(format!("INVALID  {}: {:#}", crate::spec::EXCEPTIONS_FILE, e)),
+            }
+        }
 
         let baseline_required = self
             .profile

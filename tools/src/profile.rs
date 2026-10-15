@@ -90,6 +90,9 @@ pub struct GateStageConfig {
     /// traceability: `required` fails the gate without handbooks under docs/ (UC documentation coverage)
     #[serde(default)]
     pub documentation: Option<String>,
+    /// traceability: `required` fails the gate without spec/ (citation + coverage checks)
+    #[serde(default)]
+    pub spec: Option<String>,
     /// reviews: required blind approvals per stage, e.g. [spec, requirements, "architecture:2"]
     #[serde(default)]
     pub required: Vec<String>,

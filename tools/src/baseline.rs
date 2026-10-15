@@ -76,7 +76,7 @@ fn rel(root: &Path, path: &Path) -> String {
 
 pub fn current(root: &Path, trace: &Trace) -> Result<BTreeMap<String, BaselineEntry>> {
     let mut out = BTreeMap::new();
-    for (id, path) in &trace.artifacts {
+    for (id, path) in trace.artifacts.iter().chain(trace.spec_files.iter()) {
         out.insert(
             id.clone(),
             BaselineEntry {
@@ -147,6 +147,13 @@ pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
         for loc in code.into_iter().flatten() {
             problems.push(format!("SUSPECT  {}: annotates {}, which changed since baseline", loc, up));
         }
+        if let Some(file) = up.strip_prefix("SPEC:") {
+            for (id, sources) in &trace.sources {
+                if sources.iter().any(|s| s == file || s.starts_with(&format!("{}#", file))) {
+                    problems.push(format!("SUSPECT  {}: cites {}, which changed since baseline", id, file));
+                }
+            }
+        }
         for (_, page) in trace.doc_refs.get(up).into_iter().flatten() {
             problems.push(format!("SUSPECT  {}: documents {}, which changed since baseline", page, up));
         }
@@ -165,11 +172,14 @@ pub fn write(doc_dir: &Path, baseline: &Baseline) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Structural problems that forbid approving a baseline (GAPs are allowed: specs are baselined before code exists).
+/// Structural problems that forbid approving a baseline (GAPs are allowed: specs are baselined before code exists;
+/// with spec/ present, unsourced artifacts and uncovered spec sections block the approval).
 pub fn blocking_for_approval(problems: &[String]) -> Vec<String> {
     problems
         .iter()
-        .filter(|p| p.starts_with("INVALID") || p.starts_with("DUPLICATE") || p.starts_with("ORPHAN"))
+        .filter(|p| {
+            ["INVALID", "DUPLICATE", "ORPHAN", "UNSOURCED", "UNCOVERED"].iter().any(|k| p.starts_with(k))
+        })
         .filter(|p| !p.contains("annotated in code") && !p.contains("annotated in test"))
         .cloned()
         .collect()

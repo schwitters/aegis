@@ -85,6 +85,24 @@ enum Commands {
         #[command(subcommand)]
         cmd: TestsCommands,
     },
+    /// Specification coverage: spec/ sections -> artifacts (`source:` citations)
+    Spec {
+        #[command(subcommand)]
+        cmd: SpecCommands,
+    },
+    /// Generate self-contained work packets for the implementation model (doc/tasks/)
+    Tasks {
+        #[arg(long, default_value = "doc/profile.yaml")]
+        profile: String,
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Maximum estimated tokens per packet; larger packets fail (split the requirement)
+        #[arg(long, default_value_t = 6000)]
+        max_tokens: usize,
+        /// Generate although the baseline is not current or tests are not frozen (packets are marked DRAFT)
+        #[arg(long)]
+        draft: bool,
+    },
     /// Delivered documentation (docs/: one MkDocs site per handbook)
     Docs {
         #[command(subcommand)]
@@ -155,6 +173,25 @@ enum TestsCommands {
         /// Take the source roots from the profile (gate.traceability.paths) instead of --src
         #[arg(long)]
         profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SpecCommands {
+    /// Check citations and coverage; writes doc/spec-coverage.md
+    Check {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+        /// Heading levels that must be covered
+        #[arg(long, default_value_t = aegis::spec::DEFAULT_DEPTH)]
+        depth: usize,
+    },
+    /// List all sections with their anchors (what `source:` may cite)
+    Sections {
+        #[arg(long, default_value = ".")]
+        root: String,
     },
 }
 
@@ -316,13 +353,7 @@ fn main() -> Result<()> {
             let doc_path = root_path.join(doc);
             let src_paths: Vec<PathBuf> = src.iter().map(|s| root_path.join(s)).collect();
 
-            let mut trace = Trace::default();
-            traceability::collect_docs(&doc_path, &mut trace)?;
-            traceability::collect_code(&src_paths, &mut trace)?;
-            let docs_root = root_path.join(traceability::DOCS_DIR);
-            if docs_root.exists() {
-                traceability::collect_documentation(&docs_root, &mut trace)?;
-            }
+            let trace = traceability::collect_project(&root_path, &doc_path, Some(&src_paths))?;
 
             let (rows, _, _) = traceability::build_rows(&trace);
             let mut problems = traceability::find_problems(&trace, &rows);
@@ -374,13 +405,7 @@ fn main() -> Result<()> {
             let doc_path = root_path.join(doc);
             let src_paths: Vec<PathBuf> = src.iter().map(|s| root_path.join(s)).collect();
 
-            let mut trace = Trace::default();
-            traceability::collect_docs(&doc_path, &mut trace)?;
-            traceability::collect_code(&src_paths, &mut trace)?;
-            let docs_root = root_path.join(traceability::DOCS_DIR);
-            if docs_root.exists() {
-                traceability::collect_documentation(&docs_root, &mut trace)?;
-            }
+            let trace = traceability::collect_project(&root_path, &doc_path, Some(&src_paths))?;
 
             let mut target = target;
             if changed {
@@ -435,14 +460,16 @@ fn main() -> Result<()> {
             let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
             let doc_path = root_path.join(doc);
 
-            let mut trace = Trace::default();
-            traceability::collect_docs(&doc_path, &mut trace)?;
-            let docs_root = root_path.join(traceability::DOCS_DIR);
-            if docs_root.exists() {
-                traceability::collect_documentation(&docs_root, &mut trace)?;
-            }
+            let trace = traceability::collect_project(&root_path, &doc_path, None)?;
             let (rows, _, _) = traceability::build_rows(&trace);
-            let blocking = baseline::blocking_for_approval(&traceability::find_problems(&trace, &rows));
+            let mut structural = traceability::find_problems(&trace, &rows);
+            if trace.spec_scanned {
+                // an approved specification must cover spec/ completely
+                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let exceptions = aegis::spec::load_exceptions(&doc_path)?;
+                structural.extend(aegis::spec::coverage_problems(&trace, &exceptions, &issue_ids, aegis::spec::DEFAULT_DEPTH));
+            }
+            let blocking = baseline::blocking_for_approval(&structural);
 
             let now = baseline::current(&root_path, &trace)?;
             let previous = baseline::load(&doc_path)?;
@@ -518,6 +545,53 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Spec { cmd } => match cmd {
+            SpecCommands::Check { root, doc, depth } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let doc_path = root_path.join(doc);
+                let spec_root = root_path.join(aegis::spec::SPEC_DIR);
+                anyhow::ensure!(spec_root.exists(), "{} does not exist", spec_root.display());
+                let trace = traceability::collect_project(&root_path, &doc_path, None)?;
+                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let exceptions = aegis::spec::load_exceptions(&doc_path)?;
+                let mut problems = aegis::spec::citation_problems(&trace);
+                problems.extend(trace.doc_errors.iter().cloned());
+                problems.extend(aegis::spec::coverage_problems(&trace, &exceptions, &issue_ids, depth));
+                let report = doc_path.join(aegis::spec::REPORT_FILE);
+                std::fs::write(&report, aegis::spec::render_report(&trace, &exceptions))?;
+                println!("{} section(s), {} cited artifact(s) -> {}", trace.spec_sections.len(), trace.sources.len(), report.display());
+                if problems.is_empty() {
+                    println!("✔ Specification fully covered.");
+                } else {
+                    for p in &problems {
+                        println!("{}", p);
+                    }
+                    exit(1);
+                }
+            }
+            SpecCommands::Sections { root } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let mut trace = Trace::default();
+                aegis::spec::collect_spec(&root_path, &root_path.join(aegis::spec::SPEC_DIR), &mut trace)?;
+                let mut sections: Vec<_> = trace.spec_sections.values().collect();
+                sections.sort_by_key(|s| s.order);
+                for s in sections {
+                    println!("{}{}  {}", "  ".repeat(s.level.saturating_sub(1)), s.key, s.title);
+                }
+            }
+        },
+        Commands::Tasks { profile, root, max_tokens, draft } => {
+            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let prof = Profile::load_from_file(root_path.join(&profile))?;
+            let report = aegis::tasks::generate(&root_path, &prof, &profile, max_tokens, draft)?;
+            println!("✔ {} task packet(s) -> doc/tasks/ (queue: doc/tasks/README.md)", report.tasks);
+            for w in &report.problems {
+                println!("{}", w);
+            }
+            if !report.problems.is_empty() {
+                exit(1);
+            }
+        }
         Commands::Docs { cmd } => match cmd {
             DocsCommands::CspHashes { site } => {
                 let site_path = PathBuf::from(&site);
