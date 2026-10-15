@@ -55,7 +55,14 @@ pub const STAGES: [(&str, &str); 14] = [
 ];
 
 /// Stages implemented by Aegis itself; a `command` override would bypass their checks.
-const INTERNAL_STAGES: [&str; 6] = ["architecture", "test_freeze", "traceability", "issues", "deliverables", "reviews"];
+const INTERNAL_STAGES: [&str; 6] = [
+    "architecture",
+    "test_freeze",
+    "traceability",
+    "issues",
+    "deliverables",
+    "reviews",
+];
 
 /// `aegis …` in a ruleset command runs this very binary (it need not be on PATH, e.g. tools/aegis/target/release).
 pub fn self_invocation(cmd: &str) -> String {
@@ -98,12 +105,15 @@ pub fn command_tool(cmd: &str) -> Option<String> {
         .skip_while(|w| *w == "!" || (w.contains('=') && !w.starts_with('-')));
     let first = it.next()?;
     match first.as_str() {
-        "test" | "[" | "[[" | "true" | "false" | "echo" | "printf" | "cd" | "exit" | "export" | "set" | "command"
-        | "source" | "." | ":" | "(" | "{" | "if" | "for" | "while" | "case" => None,
+        "test" | "[" | "[[" | "true" | "false" | "echo" | "printf" | "cd" | "exit" | "export"
+        | "set" | "command" | "source" | "." | ":" | "(" | "{" | "if" | "for" | "while"
+        | "case" => None,
         "cargo" => match it.next().map(|s| s.as_str()) {
-            None | Some("build" | "check" | "test" | "doc" | "run" | "bench" | "metadata" | "tree" | "fetch") => {
-                Some("cargo".to_string())
-            }
+            None
+            | Some(
+                "build" | "check" | "test" | "doc" | "run" | "bench" | "metadata" | "tree"
+                | "fetch",
+            ) => Some("cargo".to_string()),
             Some(sub) if sub.starts_with('-') || sub.starts_with('+') => Some("cargo".to_string()),
             Some(sub) => Some(format!("cargo-{}", sub)),
         },
@@ -158,7 +168,10 @@ impl GateRunner {
                 if unknown.is_empty() {
                     (rs, None)
                 } else {
-                    (rs, Some(format!("unknown gate stage(s): {}", unknown.join(", "))))
+                    (
+                        rs,
+                        Some(format!("unknown gate stage(s): {}", unknown.join(", "))),
+                    )
                 }
             }
             Err(e) => (Vec::new(), Some(format!("{:#}", e))),
@@ -179,7 +192,11 @@ impl GateRunner {
         for name in only.iter().chain(skip.iter()) {
             if !STAGES.iter().any(|(_, k)| k == name) {
                 let known: Vec<&str> = STAGES.iter().map(|(_, k)| *k).collect();
-                bail!("Unknown gate stage `{}` (known: {})", name, known.join(", "));
+                bail!(
+                    "Unknown gate stage `{}` (known: {})",
+                    name,
+                    known.join(", ")
+                );
             }
         }
         self.only = only;
@@ -188,7 +205,8 @@ impl GateRunner {
     }
 
     fn is_selected(&self, key: &str) -> bool {
-        (self.only.is_empty() || self.only.iter().any(|s| s == key)) && !self.skip.iter().any(|s| s == key)
+        (self.only.is_empty() || self.only.iter().any(|s| s == key))
+            && !self.skip.iter().any(|s| s == key)
     }
 
     fn run_cmd(&self, program: &str, args: &[&str]) -> Option<i32> {
@@ -218,7 +236,11 @@ impl GateRunner {
         println!("{}", format!("Execution Gate — {}", root_str).bold());
         println!(
             "{}",
-            format!("Profile: {} (Rigor: {}, Language: {})", prof_name, rigor, lang).bold()
+            format!(
+                "Profile: {} (Rigor: {}, Language: {})",
+                prof_name, rigor, lang
+            )
+            .bold()
         );
         println!();
 
@@ -226,7 +248,8 @@ impl GateRunner {
             println!("{}", "▶ Rulesets".bold());
             println!("  {}", format!("✘ Rulesets ({})", err).red());
             println!();
-            self.results.push(("Rulesets".to_string(), StageResult::NotExecutable(err)));
+            self.results
+                .push(("Rulesets".to_string(), StageResult::NotExecutable(err)));
             self.print_summary(false);
             return Ok(false);
         }
@@ -257,24 +280,34 @@ impl GateRunner {
             let explicitly_active = self.profile.is_stage_active("issues");
             if !explicitly_active && !issues_dir.exists() {
                 println!("{}", format!("▶ {}", display_name).bold());
-                println!("  {}", format!("∅ {} (inactive in profile)", display_name).yellow());
+                println!(
+                    "  {}",
+                    format!("∅ {} (inactive in profile)", display_name).yellow()
+                );
                 println!();
                 return Ok(StageResult::Inactive);
             }
         } else if !self.profile.is_stage_active(key) {
             println!("{}", format!("▶ {}", display_name).bold());
-            println!("  {}", format!("∅ {} (inactive in profile)", display_name).yellow());
+            println!(
+                "  {}",
+                format!("∅ {} (inactive in profile)", display_name).yellow()
+            );
             println!();
             return Ok(StageResult::Inactive);
         }
 
         println!("{}", format!("▶ {}", display_name).bold());
 
-        let override_cmd = self.profile.get_stage_config(key).and_then(|c| c.command.clone());
+        let override_cmd = self
+            .profile
+            .get_stage_config(key)
+            .and_then(|c| c.command.clone());
         let res = match override_cmd {
-            Some(_) if INTERNAL_STAGES.contains(&key) => {
-                StageResult::NotExecutable(format!("`command` override is not allowed for internal stage {}", key))
-            }
+            Some(_) if INTERNAL_STAGES.contains(&key) => StageResult::NotExecutable(format!(
+                "`command` override is not allowed for internal stage {}",
+                key
+            )),
             Some(cmd) => {
                 println!("    $ {}", cmd);
                 pass_if_zero(self.run_bash(&cmd))
@@ -282,7 +315,11 @@ impl GateRunner {
             None => self.run_builtin(key),
         };
         // Ruleset additions (deviation scan, toolchain.gate_commands) run on top of the stage's own check.
-        let res = if res == StageResult::Success { self.ruleset_checks(key) } else { res };
+        let res = if res == StageResult::Success {
+            self.ruleset_checks(key)
+        } else {
+            res
+        };
 
         match &res {
             StageResult::Success => {
@@ -310,7 +347,12 @@ impl GateRunner {
 
     /// Checks contributed by the profile's rulesets for one stage, after the stage itself passed.
     fn ruleset_checks(&self, key: &str) -> StageResult {
-        if key == "lint" && self.rulesets.iter().any(|rf| rf.deviation_policy.is_some() || !rf.forbidden_patterns.is_empty()) {
+        if key == "lint"
+            && self
+                .rulesets
+                .iter()
+                .any(|rf| rf.deviation_policy.is_some() || !rf.forbidden_patterns.is_empty())
+        {
             let table = deviation::rule_table(&self.rulesets);
             let issue_ids: BTreeSet<String> = issue::collect_issues(&self.root.join("doc"))
                 .map(|is| is.into_iter().map(|i| i.meta.id).collect())
@@ -320,13 +362,29 @@ impl GateRunner {
             let mut problems: Vec<String> = Vec::new();
             if self.rulesets.iter().any(|rf| rf.deviation_policy.is_some()) {
                 problems.extend(
-                    deviation::scan_dirs_with_policy(&dirs, &self.root, self.lang(), &table, &policy)
-                        .into_iter()
-                        .map(|f| format!("DEVIATION {}: {}", f.location, f.message)),
+                    deviation::scan_dirs_with_policy(
+                        &dirs,
+                        &self.root,
+                        self.lang(),
+                        &table,
+                        &policy,
+                    )
+                    .into_iter()
+                    .map(|f| format!("DEVIATION {}: {}", f.location, f.message)),
                 );
             }
-            let patterns: Vec<_> = self.rulesets.iter().flat_map(|rf| rf.forbidden_patterns.iter().cloned()).collect();
-            problems.extend(crate::patterns::scan(&patterns, &dirs, &self.root, &table, &policy.forbid_in));
+            let patterns: Vec<_> = self
+                .rulesets
+                .iter()
+                .flat_map(|rf| rf.forbidden_patterns.iter().cloned())
+                .collect();
+            problems.extend(crate::patterns::scan(
+                &patterns,
+                &dirs,
+                &self.root,
+                &table,
+                &policy.forbid_in,
+            ));
             if !problems.is_empty() {
                 for p in &problems {
                     println!("    {}", p.red());
@@ -341,7 +399,10 @@ impl GateRunner {
                 let tool = command_tool(&cmd);
                 if let Some(t) = tool.as_deref() {
                     if !command_exists(t) {
-                        return StageResult::NotExecutable(format!("{} (from {}) not installed: {}", t, rf.ruleset, cmd));
+                        return StageResult::NotExecutable(format!(
+                            "{} (from {}) not installed: {}",
+                            t, rf.ruleset, cmd
+                        ));
                     }
                 }
                 println!("    $ {}   [{}]", cmd, rf.ruleset);
@@ -405,7 +466,11 @@ impl GateRunner {
                     let py_files_exist = self.root.join("src").exists();
                     if py_files_exist {
                         let rc = self.run_bash("python3 -m py_compile src/*.py 2>/dev/null");
-                        if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                        if rc == Some(0) {
+                            StageResult::Success
+                        } else {
+                            StageResult::Failed(rc.unwrap_or(1))
+                        }
                     } else {
                         StageResult::NotExecutable("No src/*.py files found".to_string())
                     }
@@ -416,7 +481,11 @@ impl GateRunner {
             "c" | "cpp" => {
                 if command_exists("cmake") && self.root.join("CMakeLists.txt").exists() {
                     let rc = self.run_bash("cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("cmake or CMakeLists.txt missing".to_string())
                 }
@@ -424,7 +493,11 @@ impl GateRunner {
             "rust" => {
                 if command_exists("cargo") && self.root.join("Cargo.toml").exists() {
                     let rc = self.run_cmd("cargo", &["build", "--locked"]);
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("cargo or Cargo.toml missing".to_string())
                 }
@@ -432,18 +505,33 @@ impl GateRunner {
             "java" => {
                 if self.root.join("mvnw").exists() {
                     let rc = self.run_bash("./mvnw -q -DskipTests package");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if command_exists("mvn") && self.root.join("pom.xml").exists() {
                     let rc = self.run_bash("mvn -q -DskipTests package");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if self.root.join("gradlew").exists() {
                     let rc = self.run_bash("./gradlew assemble");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("Maven/Gradle build tool missing".to_string())
                 }
             }
-            _ => StageResult::NotExecutable(format!("No build support configured for language: {}", lang)),
+            _ => StageResult::NotExecutable(format!(
+                "No build support configured for language: {}",
+                lang
+            )),
         }
     }
 
@@ -453,26 +541,46 @@ impl GateRunner {
             "python" => {
                 if command_exists("ruff") {
                     let rc = self.run_cmd("ruff", &["check", "src/", "tests/"]);
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if command_exists("flake8") {
                     let rc = self.run_cmd("flake8", &["src/", "tests/"]);
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("Linter (ruff/flake8) missing".to_string())
                 }
             }
             "c" | "cpp" => {
-                if command_exists("run-clang-tidy") && self.root.join("build/compile_commands.json").exists() {
+                if command_exists("run-clang-tidy")
+                    && self.root.join("build/compile_commands.json").exists()
+                {
                     let rc = self.run_bash("run-clang-tidy -p build");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
-                    StageResult::NotExecutable("run-clang-tidy or build/compile_commands.json missing".to_string())
+                    StageResult::NotExecutable(
+                        "run-clang-tidy or build/compile_commands.json missing".to_string(),
+                    )
                 }
             }
             "rust" => {
                 if command_exists("cargo") && self.root.join("Cargo.toml").exists() {
                     let rc = self.run_bash(&self.clippy_command());
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("cargo missing".to_string())
                 }
@@ -480,15 +588,31 @@ impl GateRunner {
             "java" => {
                 if self.root.join("mvnw").exists() && self.root.join("checkstyle.xml").exists() {
                     let rc = self.run_bash("./mvnw -q checkstyle:check");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
-                } else if command_exists("mvn") && self.root.join("pom.xml").exists() && self.root.join("checkstyle.xml").exists() {
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
+                } else if command_exists("mvn")
+                    && self.root.join("pom.xml").exists()
+                    && self.root.join("checkstyle.xml").exists()
+                {
                     let rc = self.run_bash("mvn -q checkstyle:check");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
-                    StageResult::NotExecutable("Checkstyle configuration or tool missing".to_string())
+                    StageResult::NotExecutable(
+                        "Checkstyle configuration or tool missing".to_string(),
+                    )
                 }
             }
-            _ => StageResult::NotExecutable(format!("No linting support configured for language: {}", lang)),
+            _ => StageResult::NotExecutable(format!(
+                "No linting support configured for language: {}",
+                lang
+            )),
         }
     }
 
@@ -498,7 +622,11 @@ impl GateRunner {
             "python" => {
                 if command_exists("mypy") {
                     let rc = self.run_cmd("mypy", &["src/"]);
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("mypy missing".to_string())
                 }
@@ -506,7 +634,11 @@ impl GateRunner {
             "c" | "cpp" => {
                 if command_exists("scan-build") && self.root.join("CMakeLists.txt").exists() {
                     let rc = self.run_bash("scan-build --status-bugs cmake --build build");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("scan-build missing".to_string())
                 }
@@ -514,7 +646,11 @@ impl GateRunner {
             "rust" => {
                 if command_exists("cargo") && self.root.join("Cargo.toml").exists() {
                     let rc = self.run_bash("cargo check --all-targets --all-features");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("cargo missing".to_string())
                 }
@@ -522,15 +658,26 @@ impl GateRunner {
             "java" => {
                 if self.root.join("mvnw").exists() {
                     let rc = self.run_bash("./mvnw -q spotbugs:check");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if command_exists("mvn") && self.root.join("pom.xml").exists() {
                     let rc = self.run_bash("mvn -q spotbugs:check");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("SpotBugs tool missing".to_string())
                 }
             }
-            _ => StageResult::NotExecutable(format!("No static analysis configured for language: {}", lang)),
+            _ => StageResult::NotExecutable(format!(
+                "No static analysis configured for language: {}",
+                lang
+            )),
         }
     }
 
@@ -545,11 +692,15 @@ impl GateRunner {
         match self.lang() {
             "rust" => {
                 if !self.root.join("Cargo.lock").exists() {
-                    return StageResult::NotExecutable("Cargo.lock missing (dependency audit needs a lock file)".to_string());
+                    return StageResult::NotExecutable(
+                        "Cargo.lock missing (dependency audit needs a lock file)".to_string(),
+                    );
                 }
                 if self.root.join("deny.toml").exists() {
                     if !command_exists("cargo-deny") {
-                        return StageResult::NotExecutable("deny.toml present but cargo-deny is not installed".to_string());
+                        return StageResult::NotExecutable(
+                            "deny.toml present but cargo-deny is not installed".to_string(),
+                        );
                     }
                     let rc = self.run_bash("cargo deny check");
                     if rc != Some(0) {
@@ -611,7 +762,11 @@ impl GateRunner {
             "python" => {
                 if command_exists("pytest") {
                     let rc = self.run_cmd("pytest", &["-q"]);
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("pytest missing".to_string())
                 }
@@ -619,7 +774,11 @@ impl GateRunner {
             "c" | "cpp" => {
                 if command_exists("ctest") && self.root.join("build").exists() {
                     let rc = self.run_bash("ctest --test-dir build --output-on-failure");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("ctest or build/ directory missing".to_string())
                 }
@@ -627,7 +786,11 @@ impl GateRunner {
             "rust" => {
                 if command_exists("cargo") && self.root.join("Cargo.toml").exists() {
                     let rc = self.run_bash("cargo test --all-targets --all-features");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("cargo missing".to_string())
                 }
@@ -635,24 +798,41 @@ impl GateRunner {
             "java" => {
                 if self.root.join("mvnw").exists() {
                     let rc = self.run_bash("./mvnw -q test");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if command_exists("mvn") && self.root.join("pom.xml").exists() {
                     let rc = self.run_bash("mvn -q test");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else if self.root.join("gradlew").exists() {
                     let rc = self.run_bash("./gradlew test");
-                    if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
+                    if rc == Some(0) {
+                        StageResult::Success
+                    } else {
+                        StageResult::Failed(rc.unwrap_or(1))
+                    }
                 } else {
                     StageResult::NotExecutable("Java test runner missing".to_string())
                 }
             }
-            _ => StageResult::NotExecutable(format!("No test runner configured for language: {}", lang)),
+            _ => StageResult::NotExecutable(format!(
+                "No test runner configured for language: {}",
+                lang
+            )),
         }
     }
 
     fn stage_coverage(&self) -> StageResult {
         let cov_cfg = self.profile.get_stage_config("coverage");
-        let metric = cov_cfg.and_then(|c| c.metric.as_deref()).unwrap_or("statement");
+        let metric = cov_cfg
+            .and_then(|c| c.metric.as_deref())
+            .unwrap_or("statement");
         let Some(threshold) = cov_cfg.and_then(|c| c.threshold) else {
             return StageResult::NotExecutable("gate.coverage.threshold not set".to_string());
         };
@@ -661,11 +841,15 @@ impl GateRunner {
 
         if metric == "mcdc" {
             println!("    MC/DC requires a qualified, project-specific coverage adapter.");
-            return StageResult::NotExecutable("MC/DC adapter not configured (gate.coverage.command)".to_string());
+            return StageResult::NotExecutable(
+                "MC/DC adapter not configured (gate.coverage.command)".to_string(),
+            );
         }
 
         match (self.lang(), metric) {
-            ("python", "statement" | "line" | "branch") if command_exists("pytest") && command_exists("coverage") => {
+            ("python", "statement" | "line" | "branch")
+                if command_exists("pytest") && command_exists("coverage") =>
+            {
                 let branch_flag = if metric == "branch" { "--branch" } else { "" };
                 let cmd_str = format!(
                     "coverage run {} -m pytest -q >/dev/null 2>&1 && coverage report --fail-under={}",
@@ -673,10 +857,12 @@ impl GateRunner {
                 );
                 pass_if_zero(self.run_bash(&cmd_str))
             }
-            ("rust", "statement" | "line") if command_exists("cargo-llvm-cov") => pass_if_zero(self.run_bash(&format!(
-                "cargo llvm-cov --all-targets --all-features --fail-under-lines {}",
-                threshold
-            ))),
+            ("rust", "statement" | "line") if command_exists("cargo-llvm-cov") => {
+                pass_if_zero(self.run_bash(&format!(
+                    "cargo llvm-cov --all-targets --all-features --fail-under-lines {}",
+                    threshold
+                )))
+            }
             (lang, _) => StageResult::NotExecutable(format!(
                 "no built-in {} coverage for `{}` available; configure gate.coverage.command",
                 metric, lang
@@ -692,25 +878,43 @@ impl GateRunner {
     }
 
     fn stage_mutation(&self) -> StageResult {
-        let Some(threshold) = self.profile.get_stage_config("mutation").and_then(|c| c.threshold) else {
-            return StageResult::NotExecutable("gate.mutation.threshold (minimum mutation score in %) not set".to_string());
+        let Some(threshold) = self
+            .profile
+            .get_stage_config("mutation")
+            .and_then(|c| c.threshold)
+        else {
+            return StageResult::NotExecutable(
+                "gate.mutation.threshold (minimum mutation score in %) not set".to_string(),
+            );
         };
         println!("    required: mutation score >= {}%", threshold);
 
         match self.lang() {
             "rust" => {
                 if !command_exists("cargo-mutants") {
-                    return StageResult::NotExecutable("cargo-mutants missing (cargo install cargo-mutants)".to_string());
+                    return StageResult::NotExecutable(
+                        "cargo-mutants missing (cargo install cargo-mutants)".to_string(),
+                    );
                 }
-                let packages = self.profile.get_stage_config("mutation").map(|c| c.packages.clone()).unwrap_or_default();
+                let packages = self
+                    .profile
+                    .get_stage_config("mutation")
+                    .map(|c| c.packages.clone())
+                    .unwrap_or_default();
                 let mut args = String::new();
                 if !packages.is_empty() {
                     let names = match self.workspace_packages() {
                         Ok(n) => n,
                         Err(e) => return StageResult::NotExecutable(e),
                     };
-                    let globs: Vec<_> = packages.iter().map(|p| crate::patterns::glob_regex(p)).collect();
-                    let selected: Vec<&String> = names.iter().filter(|n| crate::patterns::matches_any(n, &globs)).collect();
+                    let globs: Vec<_> = packages
+                        .iter()
+                        .map(|p| crate::patterns::glob_regex(p))
+                        .collect();
+                    let selected: Vec<&String> = names
+                        .iter()
+                        .filter(|n| crate::patterns::matches_any(n, &globs))
+                        .collect();
                     if selected.is_empty() {
                         return StageResult::NotExecutable(format!(
                             "gate.mutation.packages {:?} match no workspace package",
@@ -723,20 +927,33 @@ impl GateRunner {
                     println!("    packages:{}", args.replace(" --package", ""));
                 }
                 // Exit codes 2 (missed mutants) and 3 (timeouts) still produce a scoreable report.
-                let rc = self.run_bash(&format!("cargo mutants --no-shuffle --output target/aegis-mutants{}", args));
+                let rc = self.run_bash(&format!(
+                    "cargo mutants --no-shuffle --output target/aegis-mutants{}",
+                    args
+                ));
                 if !matches!(rc, Some(0) | Some(2) | Some(3)) {
                     return StageResult::Failed(rc.unwrap_or(1));
                 }
-                let report = self.root.join("target/aegis-mutants/mutants.out/outcomes.json");
+                let report = self
+                    .root
+                    .join("target/aegis-mutants/mutants.out/outcomes.json");
                 match mutation_score(&report) {
-                    Ok((_, 0)) => StageResult::NotExecutable("cargo-mutants produced no viable mutants".to_string()),
+                    Ok((_, 0)) => StageResult::NotExecutable(
+                        "cargo-mutants produced no viable mutants".to_string(),
+                    ),
                     Ok((caught, total)) => {
                         let score = caught * 100 / total;
-                        println!("    mutation score: {}% ({} of {} viable mutants caught)", score, caught, total);
+                        println!(
+                            "    mutation score: {}% ({} of {} viable mutants caught)",
+                            score, caught, total
+                        );
                         if score >= u64::from(threshold) {
                             StageResult::Success
                         } else {
-                            println!("    {}", "see target/aegis-mutants/mutants.out/missed.txt".red());
+                            println!(
+                                "    {}",
+                                "see target/aegis-mutants/mutants.out/missed.txt".red()
+                            );
                             StageResult::Failed(1)
                         }
                     }
@@ -749,7 +966,9 @@ impl GateRunner {
                 } else if command_exists("mvn") && self.root.join("pom.xml").exists() {
                     "mvn"
                 } else {
-                    return StageResult::NotExecutable("Maven missing (PIT mutation testing)".to_string());
+                    return StageResult::NotExecutable(
+                        "Maven missing (PIT mutation testing)".to_string(),
+                    );
                 };
                 pass_if_zero(self.run_bash(&format!(
                     "{} -q org.pitest:pitest-maven:mutationCoverage -DmutationThreshold={}",
@@ -765,20 +984,38 @@ impl GateRunner {
 
     fn stage_architecture(&self) -> StageResult {
         if self.lang() != "rust" {
-            return StageResult::NotExecutable(format!("no architecture check for language `{}`", self.lang()));
+            return StageResult::NotExecutable(format!(
+                "no architecture check for language `{}`",
+                self.lang()
+            ));
         }
         if !command_exists("cargo") || !self.root.join("Cargo.toml").exists() {
             return StageResult::NotExecutable("cargo or Cargo.toml missing".to_string());
         }
-        let cfg = self.profile.get_stage_config("architecture").cloned().unwrap_or_default();
+        let cfg = self
+            .profile
+            .get_stage_config("architecture")
+            .cloned()
+            .unwrap_or_default();
         let output = Command::new("cargo")
-            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+            ])
             .current_dir(&self.root)
             .output();
         let metadata: serde_json::Value = match output {
             Ok(o) if o.status.success() => match serde_json::from_slice(&o.stdout) {
                 Ok(v) => v,
-                Err(e) => return StageResult::NotExecutable(format!("cannot parse cargo metadata: {}", e)),
+                Err(e) => {
+                    return StageResult::NotExecutable(format!(
+                        "cannot parse cargo metadata: {}",
+                        e
+                    ))
+                }
             },
             Ok(o) => {
                 return StageResult::NotExecutable(format!(
@@ -786,11 +1023,22 @@ impl GateRunner {
                     String::from_utf8_lossy(&o.stderr).trim()
                 ))
             }
-            Err(e) => return StageResult::NotExecutable(format!("cannot run cargo metadata: {}", e)),
+            Err(e) => {
+                return StageResult::NotExecutable(format!("cannot run cargo metadata: {}", e))
+            }
         };
-        let problems = architecture::check_with_allowlist(&metadata, &cfg.layers, &cfg.restricted, &cfg.allowed);
+        let problems = architecture::check_with_allowlist(
+            &metadata,
+            &cfg.layers,
+            &cfg.restricted,
+            &cfg.allowed,
+        );
         if problems.is_empty() {
-            let n = metadata.get("packages").and_then(|p| p.as_array()).map(|p| p.len()).unwrap_or(0);
+            let n = metadata
+                .get("packages")
+                .and_then(|p| p.as_array())
+                .map(|p| p.len())
+                .unwrap_or(0);
             println!("    {} crate(s) conform to the layer policy", n);
             StageResult::Success
         } else {
@@ -804,17 +1052,31 @@ impl GateRunner {
     /// Names of the workspace member packages (cargo metadata, offline).
     fn workspace_packages(&self) -> std::result::Result<Vec<String>, String> {
         let out = Command::new("cargo")
-            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+            ])
             .current_dir(&self.root)
             .output()
             .map_err(|e| format!("cannot run cargo metadata: {}", e))?;
         if !out.status.success() {
-            return Err(format!("cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            return Err(format!(
+                "cargo metadata failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
         }
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+        let v: serde_json::Value =
+            serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
         Ok(v["packages"]
             .as_array()
-            .map(|a| a.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| p["name"].as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
@@ -839,7 +1101,9 @@ impl GateRunner {
 
         let mut trace = match traceability::collect_project(&self.root, &doc_dir, Some(&src_dirs)) {
             Ok(t) => t,
-            Err(e) => return StageResult::NotExecutable(format!("Failed to read project: {:#}", e)),
+            Err(e) => {
+                return StageResult::NotExecutable(format!("Failed to read project: {:#}", e))
+            }
         };
         let tcfg = self.profile.get_stage_config("traceability");
         let docs_required = tcfg.and_then(|c| c.documentation.as_deref()) == Some("required");
@@ -865,10 +1129,22 @@ impl GateRunner {
                 .unwrap_or_default();
             match crate::spec::load_exceptions(&doc_dir) {
                 Ok(exc) => {
-                    problems.extend(crate::spec::coverage_problems(&trace, &exc, &issue_ids, crate::spec::DEFAULT_DEPTH));
-                    let _ = std::fs::write(doc_dir.join(crate::spec::REPORT_FILE), crate::spec::render_report(&trace, &exc));
+                    problems.extend(crate::spec::coverage_problems(
+                        &trace,
+                        &exc,
+                        &issue_ids,
+                        crate::spec::DEFAULT_DEPTH,
+                    ));
+                    let _ = std::fs::write(
+                        doc_dir.join(crate::spec::REPORT_FILE),
+                        crate::spec::render_report(&trace, &exc),
+                    );
                 }
-                Err(e) => problems.push(format!("INVALID  {}: {:#}", crate::spec::EXCEPTIONS_FILE, e)),
+                Err(e) => problems.push(format!(
+                    "INVALID  {}: {:#}",
+                    crate::spec::EXCEPTIONS_FILE,
+                    e
+                )),
             }
         }
 
@@ -938,12 +1214,16 @@ impl GateRunner {
         let doc_dir = self.root.join("doc");
         let issues = match issue::collect_issues(&doc_dir) {
             Ok(is) => is,
-            Err(e) => return StageResult::NotExecutable(format!("Failed to read doc/issues: {}", e)),
+            Err(e) => {
+                return StageResult::NotExecutable(format!("Failed to read doc/issues: {}", e))
+            }
         };
 
         let mut blockers = Vec::new();
         for i in &issues {
-            if i.meta.status != "done" && (i.meta.severity == "critical" || i.meta.severity == "high") {
+            if i.meta.status != "done"
+                && (i.meta.severity == "critical" || i.meta.severity == "high")
+            {
                 blockers.push(i);
             }
         }
@@ -972,7 +1252,9 @@ impl GateRunner {
     fn stage_deliverables(&self) -> StageResult {
         let manifest_path = self.root.join("doc/deliverables/manifest.md");
         if !manifest_path.exists() {
-            return StageResult::NotExecutable("doc/deliverables/manifest.md does not exist".to_string());
+            return StageResult::NotExecutable(
+                "doc/deliverables/manifest.md does not exist".to_string(),
+            );
         }
 
         let content = match std::fs::read_to_string(&manifest_path) {
@@ -1040,13 +1322,20 @@ impl GateRunner {
             }
         }
 
-        let skipped = self.results.iter().filter(|(_, r)| *r == StageResult::Skipped).count();
+        let skipped = self
+            .results
+            .iter()
+            .filter(|(_, r)| *r == StageResult::Skipped)
+            .count();
         if all_passed && skipped > 0 {
             println!(
                 "{}",
-                format!("✔ PARTIAL GATE GREEN — {} stage(s) skipped; this is not an acceptance", skipped)
-                    .yellow()
-                    .bold()
+                format!(
+                    "✔ PARTIAL GATE GREEN — {} stage(s) skipped; this is not an acceptance",
+                    skipped
+                )
+                .yellow()
+                .bold()
             );
         } else if all_passed {
             println!("{}", "✔ GATE GREEN — Accepted".green().bold());
@@ -1058,9 +1347,10 @@ impl GateRunner {
 
 /// Mutation score input from a cargo-mutants `outcomes.json`: (caught incl. timeouts, viable mutants).
 pub fn mutation_score(path: &std::path::Path) -> std::result::Result<(u64, u64), String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
-    let v: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("cannot parse {}: {}", path.display(), e))?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let v: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("cannot parse {}: {}", path.display(), e))?;
     let num = |k: &str| v.get(k).and_then(|x| x.as_u64());
     if let (Some(caught), Some(missed)) = (num("caught"), num("missed")) {
         let timeout = num("timeout").unwrap_or(0);
@@ -1069,7 +1359,12 @@ pub fn mutation_score(path: &std::path::Path) -> std::result::Result<(u64, u64),
     let outcomes = v
         .get("outcomes")
         .and_then(|o| o.as_array())
-        .ok_or_else(|| format!("{}: neither summary counts nor `outcomes` found", path.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "{}: neither summary counts nor `outcomes` found",
+                path.display()
+            )
+        })?;
     let (mut caught, mut total) = (0, 0);
     for o in outcomes {
         match o.get("summary").and_then(|s| s.as_str()) {

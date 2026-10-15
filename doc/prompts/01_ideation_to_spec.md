@@ -11,7 +11,7 @@
 You are a Principal Systems Architect. I want to discuss a new software product/subsystem idea and formulate a formal, unambiguous Initial Specification.
 
 MY PRODUCT IDEA & CONTEXT:
-<Insert raw brainstorm, notes, desired language (Rust, C11, C++20, Java), target domain (Safety/Automotive, Enterprise Backend, Embedded, CLI), and goals here>
+<Insert raw brainstorm, notes, desired language (Rust, C11, C++20), target domain (Safety/Automotive, Enterprise Backend, Embedded, CLI), and goals here>
 
 YOUR TASK:
 Synthesize our discussion into a comprehensive `doc/001_initial_spec.md` document adhering to the following structure:
@@ -49,7 +49,7 @@ Explicitly address each of the 9 axes (classify as Required / Recommended / N/A 
 9. Safety (Fail-safe defaults, hazard mitigation - crucial for embedded/automotive)
 
 ## 4. Architectural Hypotheses & Tech Stack
-- Proposed language: (e.g. Rust 2021, C11, C++20, Java 21)
+- Proposed language: (e.g. Rust 2021, C11, C++20)
 - Key third-party dependencies / zero-dependency policy
 - Concurrency & memory management model
 - Protocol & data serialization formats

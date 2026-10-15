@@ -44,7 +44,12 @@ impl BaselineDiff {
 
     /// Added and changed artifacts: everything whose current content was never approved.
     pub fn unapproved(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.added.iter().chain(self.changed.iter()).cloned().collect();
+        let mut v: Vec<String> = self
+            .added
+            .iter()
+            .chain(self.changed.iter())
+            .cloned()
+            .collect();
         v.sort();
         v
     }
@@ -52,7 +57,8 @@ impl BaselineDiff {
 
 /// SHA-256 over the file content with normalized line endings, hex encoded.
 pub fn hash_file(path: &Path) -> Result<String> {
-    let content = std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
     let mut normalized = Vec::with_capacity(content.len());
     let mut i = 0;
     while i < content.len() {
@@ -71,7 +77,10 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 fn rel(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).display().to_string()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 pub fn current(root: &Path, trace: &Trace) -> Result<BTreeMap<String, BaselineEntry>> {
@@ -93,9 +102,10 @@ pub fn load(doc_dir: &Path) -> Result<Option<Baseline>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let b: Baseline =
-        serde_yaml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))?;
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let b: Baseline = serde_yaml::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
     Ok(Some(b))
 }
 
@@ -120,10 +130,16 @@ pub fn diff(baseline: &Baseline, now: &BTreeMap<String, BaselineEntry>) -> Basel
 pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
     let mut problems = Vec::new();
     for id in &d.added {
-        problems.push(format!("UNREVIEWED {}: new since baseline (review, then `aegis baseline --approve`)", id));
+        problems.push(format!(
+            "UNREVIEWED {}: new since baseline (review, then `aegis baseline --approve`)",
+            id
+        ));
     }
     for id in &d.changed {
-        problems.push(format!("UNREVIEWED {}: changed since baseline (review, then `aegis baseline --approve`)", id));
+        problems.push(format!(
+            "UNREVIEWED {}: changed since baseline (review, then `aegis baseline --approve`)",
+            id
+        ));
     }
     for id in &d.removed {
         problems.push(format!("UNREVIEWED {}: removed since baseline", id));
@@ -134,7 +150,10 @@ pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
     for up in d.changed.iter().chain(d.removed.iter()) {
         for item in down.get(up).into_iter().flatten() {
             if seen.insert((item.clone(), up.clone())) {
-                problems.push(format!("SUSPECT  {}: upstream {} changed since baseline", item, up));
+                problems.push(format!(
+                    "SUSPECT  {}: upstream {} changed since baseline",
+                    item, up
+                ));
             }
         }
         let code = if up.starts_with("REQ-") {
@@ -145,17 +164,30 @@ pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
             None
         };
         for loc in code.into_iter().flatten() {
-            problems.push(format!("SUSPECT  {}: annotates {}, which changed since baseline", loc, up));
+            problems.push(format!(
+                "SUSPECT  {}: annotates {}, which changed since baseline",
+                loc, up
+            ));
         }
         if let Some(file) = up.strip_prefix("SPEC:") {
             for (id, sources) in &trace.sources {
-                if sources.iter().any(|s| s == file || s.starts_with(&format!("{}#", file)) || (s.ends_with('/') && file.starts_with(s.as_str()))) {
-                    problems.push(format!("SUSPECT  {}: cites {}, which changed since baseline", id, file));
+                if sources.iter().any(|s| {
+                    s == file
+                        || s.starts_with(&format!("{}#", file))
+                        || (s.ends_with('/') && file.starts_with(s.as_str()))
+                }) {
+                    problems.push(format!(
+                        "SUSPECT  {}: cites {}, which changed since baseline",
+                        id, file
+                    ));
                 }
             }
         }
         for (_, page) in trace.doc_refs.get(up).into_iter().flatten() {
-            problems.push(format!("SUSPECT  {}: documents {}, which changed since baseline", page, up));
+            problems.push(format!(
+                "SUSPECT  {}: documents {}, which changed since baseline",
+                page, up
+            ));
         }
     }
     problems
@@ -178,7 +210,9 @@ pub fn blocking_for_approval(problems: &[String]) -> Vec<String> {
     problems
         .iter()
         .filter(|p| {
-            ["INVALID", "DUPLICATE", "ORPHAN", "UNSOURCED", "UNCOVERED"].iter().any(|k| p.starts_with(k))
+            ["INVALID", "DUPLICATE", "ORPHAN", "UNSOURCED", "UNCOVERED"]
+                .iter()
+                .any(|k| p.starts_with(k))
         })
         .filter(|p| !p.contains("annotated in code") && !p.contains("annotated in test"))
         .cloned()

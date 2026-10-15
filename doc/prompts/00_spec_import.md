@@ -116,13 +116,18 @@ architecture, usecases or testplan now makes the gate red (UNREVIEWED/SUSPECT). 
 
 4. TESTS FIRST
 4.1 aegis baseline must print "Baseline is current". If not, STOP and report.
-4.2 Implement the test plan per tools/aegis/doc/prompts/04b_test_implementation.md: dedicated test files (never in a
-    file with production code), `@verifies TEST-xxx` on every test function, minimal compiling stubs (// STUB) in the
-    layer crates where code is missing.
-4.3 cargo test: every test must fail against the stubs for the reason its TEST-xxx describes. Fix tests that pass.
-4.4 aegis trace: no "specified in test plan but not implemented" GAPs left.
-4.5 Review skeleton: aegis review create --stage testplan --artifact <test files> --reviewer TBD --author <you>.
-4.6 STOP. Continue only after "tests frozen" (the human runs aegis tests freeze after the test review; it refuses
+4.2 Contract / Stub Freeze: Before writing or freezing tests, create the public interfaces, traits,
+    structs and headers with compiling stubs (`todo!()` in Rust, empty stub bodies returning error in
+    C11/C++20) in the production modules per doc/architecture/ARCH-xxx.md.
+4.3 Implement the test plan per tools/aegis/doc/prompts/04b_test_implementation.md: dedicated test files
+    (never in a file with production code), `@verifies TEST-xxx` on every test function, testing strictly
+    against the declared stubs.
+4.4 Ensure compile cleanliness and falsification: tests MUST compile without errors against the stubs
+    (`cargo test --no-run`), and every test must fail defined with `not yet implemented` / panic from `todo!()`.
+    Never freeze tests against imaginary signatures.
+4.5 aegis trace: no "specified in test plan but not implemented" GAPs left.
+4.6 Review skeleton: aegis review create --stage testplan --artifact <test files> --reviewer TBD --author <you>.
+4.7 STOP. Continue only after "tests frozen" (the human runs aegis tests freeze after the test review; it refuses
     unless the tests compile and every new test fails against the stubs).
 
 5. WORK PACKETS (generated, not written)

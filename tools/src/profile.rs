@@ -54,11 +54,14 @@ fn default_escalation_attempts() -> u32 {
 }
 
 fn default_max_iterations() -> u32 {
-    3
+    4
 }
 
 fn default_fast_stages() -> Vec<String> {
-    ["build", "lint", "test_freeze", "tests"].iter().map(|s| s.to_string()).collect()
+    ["build", "lint", "test_freeze", "tests"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 impl Default for AgentLoopConfig {
@@ -130,8 +133,9 @@ impl Profile {
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .with_context(|| format!("Profile not found: {}", path.as_ref().display()))?;
-        let profile: Profile = serde_yaml::from_str(&content)
-            .with_context(|| format!("Failed to parse profile YAML: {}", path.as_ref().display()))?;
+        let profile: Profile = serde_yaml::from_str(&content).with_context(|| {
+            format!("Failed to parse profile YAML: {}", path.as_ref().display())
+        })?;
         Ok(profile)
     }
 
@@ -145,8 +149,15 @@ impl Profile {
 
     /// Source roots for annotation scans: `gate.traceability.paths`, else `src` and `tests`.
     pub fn source_paths(&self, root: &Path) -> Vec<PathBuf> {
-        let configured = self.get_stage_config("traceability").map(|c| c.paths.clone()).unwrap_or_default();
-        let rels = if configured.is_empty() { vec!["src".to_string(), "tests".to_string()] } else { configured };
+        let configured = self
+            .get_stage_config("traceability")
+            .map(|c| c.paths.clone())
+            .unwrap_or_default();
+        let rels = if configured.is_empty() {
+            vec!["src".to_string(), "tests".to_string()]
+        } else {
+            configured
+        };
         rels.iter().map(|p| root.join(p)).collect()
     }
 

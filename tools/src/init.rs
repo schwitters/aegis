@@ -164,7 +164,8 @@ fn write_book_page(dir: &Path, rel: &str, content: &str, slug: &str) -> Result<(
 /// Scaffolds the four handbook sites under docs/ (RULE-RWE-100..104), only files that do not exist yet.
 fn scaffold_docs(root: &Path, slug: &str) -> Result<()> {
     let docs = root.join("docs");
-    let i18n = "  # Optional German edition (user handbook only): add page.de.md files and enable:\n\
+    let i18n =
+        "  # Optional German edition (user handbook only): add page.de.md files and enable:\n\
                 \x20 # - i18n:\n  #     docs_structure: suffix\n  #     languages:\n\
                 \x20 #       - { locale: en, default: true, name: English, build: true }\n\
                 \x20 #       - { locale: de, name: Deutsch, build: true }\n";
@@ -172,13 +173,21 @@ fn scaffold_docs(root: &Path, slug: &str) -> Result<()> {
     let books: [(&str, &str, &str, &str); 4] = [
         ("user", "User Guide", i18n, ""),
         ("operator", "Administrator Guide", "", ""),
-        ("technical", "Technical & Integration Guide", "  - neoteroi.mkdocsoad:\n      use_pymdownx: false\n", oad),
+        (
+            "technical",
+            "Technical & Integration Guide",
+            "  - neoteroi.mkdocsoad:\n      use_pymdownx: false\n",
+            oad,
+        ),
         ("hosting", "Hosting & Setup Guide", "", ""),
     ];
     for (book, title, plugins, md) in books {
         let dir = docs.join(book);
         fs::create_dir_all(dir.join("content"))?;
-        write_if_missing(&dir.join("mkdocs.yml"), &mkdocs_yml(title, plugins, md).replace("<slug>", slug))?;
+        write_if_missing(
+            &dir.join("mkdocs.yml"),
+            &mkdocs_yml(title, plugins, md).replace("<slug>", slug),
+        )?;
     }
     write_book_page(&docs.join("user"), "content/index.md",
         "# <slug> User Guide\n\nServed by the application under `/help`. Every use case with `audience: user` is documented by a page\nwith `documents: [UC-xxx]` in its frontmatter (RULE-RWE-102).\n", slug)?;
@@ -196,7 +205,10 @@ fn scaffold_docs(root: &Path, slug: &str) -> Result<()> {
         "# Configuration Reference\n\nEvery configuration key of the server crate is listed here; the test `config_keys_documented`\nfails when a key is missing (RULE-RWE-102). Use placeholders for all credentials (RULE-RWE-103).\n\n| Key | Required | Default | Description |\n|---|---|---|---|\n", slug)?;
     write_if_missing(&docs.join("requirements.txt"), DOCS_REQUIREMENTS)?;
     write_if_missing(&docs.join("about.hbs"), ABOUT_HBS)?;
-    for (name, content) in [("build.sh", DOCS_BUILD_SH), ("collect-legal.sh", DOCS_COLLECT_LEGAL_SH)] {
+    for (name, content) in [
+        ("build.sh", DOCS_BUILD_SH),
+        ("collect-legal.sh", DOCS_COLLECT_LEGAL_SH),
+    ] {
         let path = docs.join(name);
         write_if_missing(&path, &content.replace("<slug>", slug))?;
         #[cfg(unix)]
@@ -270,10 +282,18 @@ fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
          [workspace.dependencies]\n"
     );
     for (layer, _, _) in WEB_LAYERS {
-        root_manifest.push_str(&format!("{} = {{ path = \"crates/{}\" }}\n", crate_name(layer), crate_name(layer)));
+        root_manifest.push_str(&format!(
+            "{} = {{ path = \"crates/{}\" }}\n",
+            crate_name(layer),
+            crate_name(layer)
+        ));
     }
-    root_manifest.push_str("# Third-party versions are pinned here once; members use `<crate>.workspace = true`.\n\n");
-    let lints_start = TEMPLATE_RUST_LINTS.find("[workspace.lints.rust]").unwrap_or(0);
+    root_manifest.push_str(
+        "# Third-party versions are pinned here once; members use `<crate>.workspace = true`.\n\n",
+    );
+    let lints_start = TEMPLATE_RUST_LINTS
+        .find("[workspace.lints.rust]")
+        .unwrap_or(0);
     root_manifest.push_str(&TEMPLATE_RUST_LINTS[lints_start..]);
     fs::write(root.join("Cargo.toml"), root_manifest).context("Failed to write Cargo.toml")?;
 
@@ -281,10 +301,16 @@ fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
         let dir = root.join("crates").join(crate_name(layer));
         fs::create_dir_all(dir.join("src"))?;
         let deps: Vec<String> = deps.iter().map(|d| crate_name(d)).collect();
-        fs::write(dir.join("Cargo.toml"), member_manifest(&crate_name(layer), description, &deps, ""))?;
+        fs::write(
+            dir.join("Cargo.toml"),
+            member_manifest(&crate_name(layer), description, &deps, ""),
+        )?;
         let header = format!("//! {description}\n\n#![forbid(unsafe_code)]\n");
         if layer == "server" {
-            fs::write(dir.join("src/main.rs"), format!("{header}\nfn main() {{}}\n"))?;
+            fs::write(
+                dir.join("src/main.rs"),
+                format!("{header}\nfn main() {{}}\n"),
+            )?;
         } else if layer == "domain" {
             fs::write(dir.join("src/lib.rs"), format!("{header}\npub mod pii;\n"))?;
             fs::write(dir.join("src/pii.rs"), PII_RS)?;
@@ -295,13 +321,22 @@ fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
 
     // Integration tests: a virtual workspace does not build a root tests/ directory, so tests/ is a member crate.
     let all: Vec<String> = WEB_LAYERS.iter().map(|(l, _, _)| crate_name(l)).collect();
-    let tests_extra = "\n[lib]\npath = \"lib.rs\"\n\n[[test]]\nname = \"it\"\npath = \"it/main.rs\"\n";
+    let tests_extra =
+        "\n[lib]\npath = \"lib.rs\"\n\n[[test]]\nname = \"it\"\npath = \"it/main.rs\"\n";
     fs::create_dir_all(root.join("tests/it"))?;
     fs::write(
         root.join("tests/Cargo.toml"),
-        member_manifest(&crate_name("tests"), "Integration and HTTP tests across all layers.", &all, tests_extra),
+        member_manifest(
+            &crate_name("tests"),
+            "Integration and HTTP tests across all layers.",
+            &all,
+            tests_extra,
+        ),
     )?;
-    fs::write(root.join("tests/lib.rs"), "//! Shared fixtures for the integration tests.\n\n#![forbid(unsafe_code)]\n")?;
+    fs::write(
+        root.join("tests/lib.rs"),
+        "//! Shared fixtures for the integration tests.\n\n#![forbid(unsafe_code)]\n",
+    )?;
     fs::write(
         root.join("tests/it/main.rs"),
         "//! Integration tests: one module per feature, each test annotated with `@verifies` and frozen\n\
@@ -351,7 +386,10 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
 }
 
 pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
-    if !matches!(opts.profile.as_str(), "enterprise" | "embedded-safety" | "safety" | "web-enterprise" | "web") {
+    if !matches!(
+        opts.profile.as_str(),
+        "enterprise" | "embedded-safety" | "safety" | "web-enterprise" | "web"
+    ) {
         anyhow::bail!(
             "aegis init scaffolds the profiles web-enterprise, enterprise and embedded-safety. For `{}`, run init with \
              --profile enterprise and copy doc/{}.yaml plus the rulesets it lists from the Aegis repository.",
@@ -389,7 +427,10 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     if is_web {
         write_if_missing(&rules_dir.join("rust-strict.yaml"), RULESET_RUST_STRICT)?;
         write_if_missing(&rules_dir.join("rust-service.yaml"), RULESET_RUST_SERVICE)?;
-        write_if_missing(&rules_dir.join("rust-web-enterprise.yaml"), RULESET_RUST_WEB)?;
+        write_if_missing(
+            &rules_dir.join("rust-web-enterprise.yaml"),
+            RULESET_RUST_WEB,
+        )?;
         // optional overlay, enabled in doc/profile.yaml when the frontend uses htmx
         write_if_missing(&rules_dir.join("rust-web-htmx.yaml"), RULESET_RUST_WEB_HTMX)?;
         // optional overlay, enabled in doc/profile.yaml for installable / offline-capable frontends
@@ -470,7 +511,11 @@ Required deliverables for gate verification:
     let profile_path = doc_dir.join("profile.yaml");
     if !profile_path.exists() {
         let profile_content = if is_safety {
-            let ruleset_name = if lang == "c" || lang == "c11" { "c11-embedded-safety.yaml" } else { "rust-safety.yaml" };
+            let ruleset_name = if lang == "c" || lang == "c11" {
+                "c11-embedded-safety.yaml"
+            } else {
+                "rust-safety.yaml"
+            };
             format!(
                 r#"# Domain Profile: Safety-Critical Systems
 profile: embedded-safety
@@ -528,14 +573,13 @@ coding_constraints:
   - Zero recursion (statically bounded stack depth).
   - Every @implements annotation must state the realized REQ-ID.
 "#,
-                lang = &lang,
+                lang = lang,
                 ruleset_name = ruleset_name
             )
         } else {
             let ruleset_name = match lang.as_str() {
                 "c" | "c11" => "c11-strict.yaml",
                 "cpp" | "cpp20" | "c++" => "cpp-strict.yaml",
-                "java" => "java-enterprise.yaml",
                 _ => "rust-safety.yaml",
             };
             format!(
@@ -593,7 +637,7 @@ coding_constraints:
   - Zero hardcoded credentials or secrets in source code.
   - Every @implements annotation must state the realized REQ-ID.
 "#,
-                lang = &lang,
+                lang = lang,
                 ruleset_name = ruleset_name
             )
         };
@@ -791,11 +835,22 @@ Initial thoughts on technology stack, components, and protocol boundaries.
         }
     }
 
-    println!("{}", "✔ Aegis scaffolding initialized successfully!".green().bold());
+    println!(
+        "{}",
+        "✔ Aegis scaffolding initialized successfully!"
+            .green()
+            .bold()
+    );
     println!("  Directory: {}", doc_dir.display().to_string().cyan());
-    println!("  Profile:   {}", doc_dir.join("profile.yaml").display().to_string().yellow());
+    println!(
+        "  Profile:   {}",
+        doc_dir.join("profile.yaml").display().to_string().yellow()
+    );
     println!("  Ruleset:   {}", rules_dir.display().to_string().yellow());
-    println!("  Gate script: {}", root.join("gate.sh").display().to_string().green());
+    println!(
+        "  Gate script: {}",
+        root.join("gate.sh").display().to_string().green()
+    );
     if is_web {
         println!();
         println!("{}", "Web Profile Setup:".bold());
@@ -809,7 +864,9 @@ Initial thoughts on technology stack, components, and protocol boundaries.
                 rules_dir.join("workspace-lints.toml").display().to_string().cyan()
             );
         }
-        println!("  Create doc/privacy/data-inventory.yaml with the first migration (RULE-RWE-071).");
+        println!(
+            "  Create doc/privacy/data-inventory.yaml with the first migration (RULE-RWE-071)."
+        );
         println!("  Handbooks: docs/{{user,operator,technical,hosting}} (MkDocs; pip install -r docs/requirements.txt; docs/build.sh).");
         println!("  htmx frontend? Enable doc/rules/rust-web-htmx.yaml under `rulesets:` in doc/profile.yaml.");
         println!("  SPA/PWA frontend? Add its build/lint/test commands to the gate stages (see comments in the profile);");
@@ -818,7 +875,14 @@ Initial thoughts on technology stack, components, and protocol boundaries.
     if opts.brownfield {
         println!();
         println!("{}", "Brownfield Migration Artifacts Created:".bold());
-        println!("  1. Prompt template: {}", doc_dir.join("REVERSE_SPEC_EXTRACTION_PROMPT.md").display().to_string().cyan());
+        println!(
+            "  1. Prompt template: {}",
+            doc_dir
+                .join("REVERSE_SPEC_EXTRACTION_PROMPT.md")
+                .display()
+                .to_string()
+                .cyan()
+        );
         println!(
             "  2. Baseline REQ/UC/ARCH: {}, {} & {}",
             req_dir.join("REQ-001.md").display(),
@@ -829,7 +893,14 @@ Initial thoughts on technology stack, components, and protocol boundaries.
     } else {
         println!();
         println!("{}", "Greenfield Next Steps:".bold());
-        println!("  1. Refine specification in {}", doc_dir.join("001_initial_spec.md").display().to_string().cyan());
+        println!(
+            "  1. Refine specification in {}",
+            doc_dir
+                .join("001_initial_spec.md")
+                .display()
+                .to_string()
+                .cyan()
+        );
         println!("  2. Run blind review with Frontier Model B; record it: aegis review create --stage spec ...");
         println!("  3. Derive requirements, architecture (ARCH-xxx), use cases and test plan; review; aegis baseline --approve <you>");
         println!("  4. Implement and review the tests, then freeze them: aegis tests freeze");

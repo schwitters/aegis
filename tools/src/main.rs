@@ -1,5 +1,3 @@
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
 use aegis::baseline;
 use aegis::gate::GateRunner;
 use aegis::impact;
@@ -8,6 +6,8 @@ use aegis::profile::Profile;
 use aegis::review::{self, CreateReviewOptions};
 use aegis::testfreeze;
 use aegis::traceability::{self, Trace};
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
@@ -365,7 +365,11 @@ enum IssueCommands {
 fn source_roots(root: &Path, src: &[String], profile: Option<&str>) -> Result<Vec<PathBuf>> {
     match profile {
         Some(p) => {
-            let path = if Path::new(p).is_absolute() { PathBuf::from(p) } else { root.join(p) };
+            let path = if Path::new(p).is_absolute() {
+                PathBuf::from(p)
+            } else {
+                root.join(p)
+            };
             Ok(Profile::load_from_file(&path)?.source_paths(root))
         }
         None => Ok(src.iter().map(|s| root.join(s)).collect()),
@@ -383,7 +387,9 @@ fn main() -> Result<()> {
             out,
             json,
         } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let doc_path = root_path.join(doc);
             let src_paths: Vec<PathBuf> = src.iter().map(|s| root_path.join(s)).collect();
 
@@ -431,11 +437,15 @@ fn main() -> Result<()> {
             json,
         } => {
             if target.is_empty() && code_file.is_none() && !changed {
-                eprintln!("Please specify at least --target <ID...>, --code-file <path> or --changed.");
+                eprintln!(
+                    "Please specify at least --target <ID...>, --code-file <path> or --changed."
+                );
                 exit(2);
             }
 
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let doc_path = root_path.join(doc);
             let src_paths: Vec<PathBuf> = src.iter().map(|s| root_path.join(s)).collect();
 
@@ -456,11 +466,7 @@ fn main() -> Result<()> {
             let plan = impact::make_plan(&kind, &depth, &blast);
 
             if json {
-                let report = impact::ImpactReport {
-                    depth,
-                    blast,
-                    plan,
-                };
+                let report = impact::ImpactReport { depth, blast, plan };
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 let text = impact::render_report_text(&kind, &depth, &blast, &plan);
@@ -473,7 +479,9 @@ fn main() -> Result<()> {
             only,
             skip,
         } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let profile_path = if Path::new(&profile).is_absolute() {
                 PathBuf::from(&profile)
             } else {
@@ -491,7 +499,9 @@ fn main() -> Result<()> {
             }
         }
         Commands::Baseline { approve, root, doc } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let doc_path = root_path.join(doc);
 
             let trace = traceability::collect_project(&root_path, &doc_path, None)?;
@@ -499,9 +509,17 @@ fn main() -> Result<()> {
             let mut structural = traceability::find_problems(&trace, &rows);
             if trace.spec_scanned {
                 // an approved specification must cover spec/ completely
-                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let issue_ids = issue::collect_issues(&doc_path)?
+                    .into_iter()
+                    .map(|i| i.meta.id)
+                    .collect();
                 let exceptions = aegis::spec::load_exceptions(&doc_path)?;
-                structural.extend(aegis::spec::coverage_problems(&trace, &exceptions, &issue_ids, aegis::spec::DEFAULT_DEPTH));
+                structural.extend(aegis::spec::coverage_problems(
+                    &trace,
+                    &exceptions,
+                    &issue_ids,
+                    aegis::spec::DEFAULT_DEPTH,
+                ));
             }
             let blocking = baseline::blocking_for_approval(&structural);
 
@@ -519,13 +537,20 @@ fn main() -> Result<()> {
                 println!("✔ Baseline is current ({} artifacts).", now.len());
                 return Ok(());
             }
-            for (label, ids) in [("new", &d.added), ("changed", &d.changed), ("removed", &d.removed)] {
+            for (label, ids) in [
+                ("new", &d.added),
+                ("changed", &d.changed),
+                ("removed", &d.removed),
+            ] {
                 for id in ids {
                     println!("  {:<8} {}", label, id);
                 }
             }
             if previous.is_some() {
-                for p in baseline::check(&trace, &d).iter().filter(|p| p.starts_with("SUSPECT")) {
+                for p in baseline::check(&trace, &d)
+                    .iter()
+                    .filter(|p| p.starts_with("SUSPECT"))
+                {
                     println!("  {}", p);
                 }
             }
@@ -546,32 +571,54 @@ fn main() -> Result<()> {
                     }
                     let b = baseline::Baseline {
                         approved_by: Some(name),
-                        approved_at: Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()),
+                        approved_at: Some(
+                            chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+                        ),
                         artifacts: now,
                     };
                     let path = baseline::write(&doc_path, &b)?;
-                    println!("✔ Baseline approved: {}", path.strip_prefix(&root_path).unwrap_or(&path).display());
+                    println!(
+                        "✔ Baseline approved: {}",
+                        path.strip_prefix(&root_path).unwrap_or(&path).display()
+                    );
                 }
             }
         }
         Commands::Tests { cmd } => match cmd {
-            TestsCommands::Freeze { characterization, unchecked, root, doc, src, profile } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            TestsCommands::Freeze {
+                characterization,
+                unchecked,
+                root,
+                doc,
+                src,
+                profile,
+            } => {
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let src_paths = source_roots(&root_path, &src, profile.as_deref())?;
                 let mode = match (characterization, unchecked) {
                     (_, true) => testfreeze::FreezeMode::Unchecked,
                     (true, false) => testfreeze::FreezeMode::Characterization,
                     (false, false) => testfreeze::FreezeMode::FailFirst,
                 };
-                let (path, n) = testfreeze::freeze_checked(&root_path, &root_path.join(doc), &src_paths, mode)?;
+                let (path, n) =
+                    testfreeze::freeze_checked(&root_path, &root_path.join(doc), &src_paths, mode)?;
                 println!(
                     "✔ Froze {} test file(s): {}",
                     n,
                     path.strip_prefix(&root_path).unwrap_or(&path).display()
                 );
             }
-            TestsCommands::Verify { root, doc, src, profile } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            TestsCommands::Verify {
+                root,
+                doc,
+                src,
+                profile,
+            } => {
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let src_paths = source_roots(&root_path, &src, profile.as_deref())?;
                 let problems = testfreeze::verify(&root_path, &root_path.join(doc), &src_paths)?;
                 if problems.is_empty() {
@@ -586,19 +633,34 @@ fn main() -> Result<()> {
         },
         Commands::Spec { cmd } => match cmd {
             SpecCommands::Check { root, doc, depth } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
                 let spec_root = root_path.join(aegis::spec::SPEC_DIR);
                 anyhow::ensure!(spec_root.exists(), "{} does not exist", spec_root.display());
                 let trace = traceability::collect_project(&root_path, &doc_path, None)?;
-                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let issue_ids = issue::collect_issues(&doc_path)?
+                    .into_iter()
+                    .map(|i| i.meta.id)
+                    .collect();
                 let exceptions = aegis::spec::load_exceptions(&doc_path)?;
                 let mut problems = aegis::spec::citation_problems(&trace);
                 problems.extend(trace.doc_errors.iter().cloned());
-                problems.extend(aegis::spec::coverage_problems(&trace, &exceptions, &issue_ids, depth));
+                problems.extend(aegis::spec::coverage_problems(
+                    &trace,
+                    &exceptions,
+                    &issue_ids,
+                    depth,
+                ));
                 let report = doc_path.join(aegis::spec::REPORT_FILE);
                 std::fs::write(&report, aegis::spec::render_report(&trace, &exceptions))?;
-                println!("{} section(s), {} cited artifact(s) -> {}", trace.spec_sections.len(), trace.sources.len(), report.display());
+                println!(
+                    "{} section(s), {} cited artifact(s) -> {}",
+                    trace.spec_sections.len(),
+                    trace.sources.len(),
+                    report.display()
+                );
                 if problems.is_empty() {
                     println!("✔ Specification fully covered.");
                 } else {
@@ -609,22 +671,43 @@ fn main() -> Result<()> {
                 }
             }
             SpecCommands::Sections { root } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let mut trace = Trace::default();
-                aegis::spec::collect_spec(&root_path, &root_path.join(aegis::spec::SPEC_DIR), &mut trace)?;
+                aegis::spec::collect_spec(
+                    &root_path,
+                    &root_path.join(aegis::spec::SPEC_DIR),
+                    &mut trace,
+                )?;
                 let mut sections: Vec<_> = trace.spec_sections.values().collect();
                 sections.sort_by_key(|s| s.order);
                 for s in sections {
-                    println!("{}{}  {}", "  ".repeat(s.level.saturating_sub(1)), s.key, s.title);
+                    println!(
+                        "{}{}  {}",
+                        "  ".repeat(s.level.saturating_sub(1)),
+                        s.key,
+                        s.title
+                    );
                 }
             }
         },
-        Commands::Tasks { profile, root, max_tokens, draft } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+        Commands::Tasks {
+            profile,
+            root,
+            max_tokens,
+            draft,
+        } => {
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let prof = Profile::load_from_file(root_path.join(&profile))?;
             let budget = max_tokens.unwrap_or_else(|| prof.agent_loop().max_task_tokens);
             let report = aegis::tasks::generate(&root_path, &prof, &profile, budget, draft)?;
-            println!("✔ {} task packet(s) -> doc/tasks/ (queue: doc/tasks/README.md)", report.tasks);
+            println!(
+                "✔ {} task packet(s) -> doc/tasks/ (queue: doc/tasks/README.md)",
+                report.tasks
+            );
             for w in &report.problems {
                 println!("{}", w);
             }
@@ -634,10 +717,16 @@ fn main() -> Result<()> {
         }
         Commands::Migrations { cmd } => match cmd {
             MigrationsCommands::Check { dir, rule, root } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
-                let (n, findings) = aegis::migrations::check_dir(&root_path, &root_path.join(&dir), &rule)?;
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
+                let (n, findings) =
+                    aegis::migrations::check_dir(&root_path, &root_path.join(&dir), &rule)?;
                 if findings.is_empty() {
-                    println!("✔ {} migration file(s) checked, no unmarked destructive statements", n);
+                    println!(
+                        "✔ {} migration file(s) checked, no unmarked destructive statements",
+                        n
+                    );
                 } else {
                     for f in &findings {
                         println!("{}", f);
@@ -646,11 +735,20 @@ fn main() -> Result<()> {
                 }
             }
         },
-        Commands::Escalate { task, profile, root } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+        Commands::Escalate {
+            task,
+            profile,
+            root,
+        } => {
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let prof = Profile::load_from_file(root_path.join(&profile))?;
             let path = aegis::escalate::bundle(&root_path, &prof, &profile, &task, None)?;
-            println!("✔ Escalation context: {}", path.strip_prefix(&root_path).unwrap_or(&path).display());
+            println!(
+                "✔ Escalation context: {}",
+                path.strip_prefix(&root_path).unwrap_or(&path).display()
+            );
         }
         Commands::Docs { cmd } => match cmd {
             DocsCommands::CspHashes { site } => {
@@ -682,7 +780,9 @@ fn main() -> Result<()> {
                 root,
                 doc,
             } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let (id, path) = review::create_review(
                     &root_path.join(doc),
                     CreateReviewOptions {
@@ -699,7 +799,9 @@ fn main() -> Result<()> {
                 );
             }
             ReviewCommands::List { json, root, doc } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let reviews = review::collect_reviews(&root_path.join(doc))?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&reviews)?);
@@ -707,11 +809,20 @@ fn main() -> Result<()> {
                     print!("{}", review::render_table(&reviews));
                 }
             }
-            ReviewCommands::Check { required, root, doc } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            ReviewCommands::Check {
+                required,
+                root,
+                doc,
+            } => {
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
                 let reviews = review::collect_reviews(&doc_path)?;
-                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let issue_ids = issue::collect_issues(&doc_path)?
+                    .into_iter()
+                    .map(|i| i.meta.id)
+                    .collect();
                 let problems = review::check(&reviews, &issue_ids, &required);
                 if problems.is_empty() {
                     println!("✔ {} review record(s) valid.", reviews.len());
@@ -761,7 +872,9 @@ fn main() -> Result<()> {
                 root,
                 doc,
             } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
 
                 let (id, file_path) = issue::create_issue(
@@ -791,7 +904,9 @@ fn main() -> Result<()> {
                 root,
                 doc,
             } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
 
                 let mut issues = issue::collect_issues(&doc_path)?;
@@ -815,7 +930,9 @@ fn main() -> Result<()> {
                 }
             }
             IssueCommands::Close { id, root, doc } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
 
                 let file_path = issue::close_issue(&doc_path, &id)?;
@@ -828,7 +945,9 @@ fn main() -> Result<()> {
                 root,
                 doc,
             } => {
-                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let root_path = Path::new(&root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&root));
                 let doc_path = root_path.join(doc);
 
                 let issues = issue::collect_issues(&doc_path)?;
@@ -860,7 +979,9 @@ fn main() -> Result<()> {
             root,
             name,
         } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             aegis::init::run_init(
                 &root_path,
                 aegis::init::InitOptions {
@@ -871,12 +992,10 @@ fn main() -> Result<()> {
                 },
             )?;
         }
-        Commands::Instructions {
-            profile,
-            out,
-            root,
-        } => {
-            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+        Commands::Instructions { profile, out, root } => {
+            let root_path = Path::new(&root)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&root));
             let prof_path = profile.map(|p| {
                 if Path::new(&p).is_absolute() {
                     PathBuf::from(p)

@@ -85,12 +85,18 @@ pub fn parse_sections(file: &str, content: &str) -> Vec<Section> {
             fence = Some(trimmed[..3].to_string());
             continue;
         }
-        let Some(cap) = heading_re.captures(line) else { continue };
+        let Some(cap) = heading_re.captures(line) else {
+            continue;
+        };
         let level = cap[1].len();
         let title = cap[2].replace(['*', '`'], "");
         let base = slug(&title);
         let n = seen.entry(base.clone()).or_insert(0);
-        let anchor = if *n == 0 { base.clone() } else { format!("{}-{}", base, n) };
+        let anchor = if *n == 0 {
+            base.clone()
+        } else {
+            format!("{}-{}", base, n)
+        };
         *n += 1;
         let key = format!("{}#{}", file, anchor);
         while stack.last().map(|(l, _)| *l >= level).unwrap_or(false) {
@@ -99,10 +105,24 @@ pub fn parse_sections(file: &str, content: &str) -> Vec<Section> {
         let parent = stack.last().map(|(_, k)| k.clone());
         stack.push((level, key.clone()));
         let order = sections.len();
-        sections.push(Section { key, file: file.to_string(), level, title: title.trim().to_string(), parent, order });
+        sections.push(Section {
+            key,
+            file: file.to_string(),
+            level,
+            title: title.trim().to_string(),
+            parent,
+            order,
+        });
     }
     if sections.is_empty() {
-        sections.push(Section { key: file.to_string(), file: file.to_string(), level: 1, title: file.to_string(), parent: None, order: 0 });
+        sections.push(Section {
+            key: file.to_string(),
+            file: file.to_string(),
+            level: 1,
+            title: file.to_string(),
+            parent: None,
+            order: 0,
+        });
     }
     sections
 }
@@ -120,23 +140,44 @@ pub fn collect_spec(root: &Path, spec_root: &Path, trace: &mut Trace) -> Result<
         .collect();
     files.sort();
     if files.is_empty() {
-        trace.doc_errors.push(format!("EMPTY    no specification documents under {}", spec_root.display()));
+        trace.doc_errors.push(format!(
+            "EMPTY    no specification documents under {}",
+            spec_root.display()
+        ));
     }
     for path in files {
-        let rel = path.strip_prefix(root).unwrap_or(&path).display().to_string();
-        trace.spec_files.insert(format!("SPEC:{}", rel), path.clone());
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        trace
+            .spec_files
+            .insert(format!("SPEC:{}", rel), path.clone());
         let base = trace.spec_sections.len();
         if path.extension().and_then(|s| s.to_str()) == Some("md") {
-            let content = std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read {}", path.display()))?;
             for mut s in parse_sections(&rel, &content) {
                 s.order += base;
                 trace.spec_sections.insert(s.key.clone(), s);
             }
         } else {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(&rel).to_string();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&rel)
+                .to_string();
             trace.spec_sections.insert(
                 rel.clone(),
-                Section { key: rel.clone(), file: rel, level: 1, title: name, parent: None, order: base },
+                Section {
+                    key: rel.clone(),
+                    file: rel,
+                    level: 1,
+                    title: name,
+                    parent: None,
+                    order: base,
+                },
             );
         }
     }
@@ -151,21 +192,32 @@ fn dir_covers(dir: &str, file: &str) -> bool {
 
 pub fn citation_problems(trace: &Trace) -> Vec<String> {
     let mut problems = Vec::new();
-    let files: BTreeSet<String> = trace.spec_files.keys().map(|k| k.trim_start_matches("SPEC:").to_string()).collect();
+    let files: BTreeSet<String> = trace
+        .spec_files
+        .keys()
+        .map(|k| k.trim_start_matches("SPEC:").to_string())
+        .collect();
     for (id, sources) in &trace.sources {
         for s in sources {
             let resolves = trace.spec_sections.contains_key(s)
                 || (!s.contains('#') && files.contains(s))
                 || files.iter().any(|f| dir_covers(s, f));
             if !resolves {
-                problems.push(format!("INVALID  {}: source `{}` does not resolve to a spec file/heading", id, s));
+                problems.push(format!(
+                    "INVALID  {}: source `{}` does not resolve to a spec file/heading",
+                    id, s
+                ));
             }
         }
     }
     for id in trace.artifacts.keys() {
-        let needs_source = id.starts_with("REQ-") || id.starts_with("ARCH-") || id.starts_with("UC-");
+        let needs_source =
+            id.starts_with("REQ-") || id.starts_with("ARCH-") || id.starts_with("UC-");
         if needs_source && trace.sources.get(id).map(|s| s.is_empty()).unwrap_or(true) {
-            problems.push(format!("UNSOURCED {}: no `source:` citation into {}/", id, SPEC_DIR));
+            problems.push(format!(
+                "UNSOURCED {}: no `source:` citation into {}/",
+                id, SPEC_DIR
+            ));
         }
     }
     problems
@@ -187,12 +239,18 @@ pub fn load_exceptions(doc_dir: &Path) -> Result<Exceptions> {
     if !path.exists() {
         return Ok(Exceptions::default());
     }
-    let content = std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
     serde_yaml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))
 }
 
 /// Coverage: every section up to `depth` is cited (itself or a descendant) or a valid exception.
-pub fn coverage_problems(trace: &Trace, exceptions: &Exceptions, issue_ids: &BTreeSet<String>, depth: usize) -> Vec<String> {
+pub fn coverage_problems(
+    trace: &Trace,
+    exceptions: &Exceptions,
+    issue_ids: &BTreeSet<String>,
+    depth: usize,
+) -> Vec<String> {
     let mut problems = Vec::new();
     let cited = citations(trace);
     let mut covered: BTreeSet<String> = BTreeSet::new();
@@ -211,17 +269,25 @@ pub fn coverage_problems(trace: &Trace, exceptions: &Exceptions, issue_ids: &BTr
     let mut excepted: BTreeSet<String> = BTreeSet::new();
     for e in &exceptions.exceptions {
         if !trace.spec_sections.contains_key(&e.section) {
-            problems.push(format!("INVALID  {}: exception for unknown section `{}`", EXCEPTIONS_FILE, e.section));
+            problems.push(format!(
+                "INVALID  {}: exception for unknown section `{}`",
+                EXCEPTIONS_FILE, e.section
+            ));
             continue;
         }
         match (&e.reason, &e.issue) {
-            (_, Some(i)) if !issue_ids.contains(i) => {
-                problems.push(format!("ORPHAN   {}: exception `{}` references {}, which does not exist", EXCEPTIONS_FILE, e.section, i))
-            }
-            (None, None) => problems.push(format!("INVALID  {}: exception `{}` needs a reason or an issue", EXCEPTIONS_FILE, e.section)),
-            (Some(r), None) if r.trim().is_empty() => {
-                problems.push(format!("INVALID  {}: exception `{}` has an empty reason", EXCEPTIONS_FILE, e.section))
-            }
+            (_, Some(i)) if !issue_ids.contains(i) => problems.push(format!(
+                "ORPHAN   {}: exception `{}` references {}, which does not exist",
+                EXCEPTIONS_FILE, e.section, i
+            )),
+            (None, None) => problems.push(format!(
+                "INVALID  {}: exception `{}` needs a reason or an issue",
+                EXCEPTIONS_FILE, e.section
+            )),
+            (Some(r), None) if r.trim().is_empty() => problems.push(format!(
+                "INVALID  {}: exception `{}` has an empty reason",
+                EXCEPTIONS_FILE, e.section
+            )),
             _ => {}
         }
         // an exception covers the section and all its sub-sections
@@ -238,7 +304,10 @@ pub fn coverage_problems(trace: &Trace, exceptions: &Exceptions, issue_ids: &BTr
     }
     for s in trace.spec_sections.values() {
         if s.level <= depth && !covered.contains(&s.key) && !excepted.contains(&s.key) {
-            problems.push(format!("UNCOVERED {}: \"{}\" is cited by no artifact and not excepted", s.key, s.title));
+            problems.push(format!(
+                "UNCOVERED {}: \"{}\" is cited by no artifact and not excepted",
+                s.key, s.title
+            ));
         }
     }
     problems
@@ -247,7 +316,11 @@ pub fn coverage_problems(trace: &Trace, exceptions: &Exceptions, issue_ids: &BTr
 /// Generated coverage report (doc/spec-coverage.md).
 pub fn render_report(trace: &Trace, exceptions: &Exceptions) -> String {
     let cited = citations(trace);
-    let exc: BTreeMap<&str, &Exception> = exceptions.exceptions.iter().map(|e| (e.section.as_str(), e)).collect();
+    let exc: BTreeMap<&str, &Exception> = exceptions
+        .exceptions
+        .iter()
+        .map(|e| (e.section.as_str(), e))
+        .collect();
     let mut out = String::from(
         "# Specification Coverage\n\n> Generated by `aegis spec check` — do not edit. Exceptions: doc/spec-coverage.yaml.\n\n\
          | Section | Title | Artifacts |\n|---|---|---|\n",
@@ -263,7 +336,10 @@ pub fn render_report(trace: &Trace, exceptions: &Exceptions) -> String {
             .collect();
         let direct = cited.get(&s.key).cloned().unwrap_or_default();
         let all: BTreeSet<String> = direct.union(&via_dir).cloned().collect();
-        let cell = match (if all.is_empty() { None } else { Some(&all) }, exc.get(s.key.as_str())) {
+        let cell = match (
+            if all.is_empty() { None } else { Some(&all) },
+            exc.get(s.key.as_str()),
+        ) {
             (Some(ids), _) => ids.iter().cloned().collect::<Vec<_>>().join(", "),
             (None, Some(e)) => match (&e.issue, &e.reason) {
                 (Some(i), _) => format!("open ({})", i),
@@ -272,7 +348,10 @@ pub fn render_report(trace: &Trace, exceptions: &Exceptions) -> String {
             },
             (None, None) => "—".to_string(),
         };
-        out.push_str(&format!("| `{}` | {}{} | {} |\n", s.key, indent, s.title, cell));
+        out.push_str(&format!(
+            "| `{}` | {}{} | {} |\n",
+            s.key, indent, s.title, cell
+        ));
     }
     out
 }

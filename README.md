@@ -32,7 +32,7 @@ You hand the coding agent exactly three things — everything else is in this re
 | Profile | For | Overlays |
 |---|---|---|
 | `web-enterprise` | Rust web applications (Axum, SQLx/SQLite), layered workspace, ASVS L2, GDPR, four handbooks | `rust-web-htmx` (htmx frontend) or `rust-web-pwa` (installable/offline frontend); none for server-rendered or SPA |
-| `enterprise` | Backend services (Java/Rust/C++), maintainability and security focus | — |
+| `enterprise` | Backend services (Rust/C11/C++20), maintainability and security focus | — |
 | `local-first` | Desktop clients with optional self-hosted server, privacy by architecture | — |
 | `embedded-safety` | Safety-critical firmware (ISO 26262, ASIL-D, MC/DC) | — |
 
@@ -212,7 +212,7 @@ flowchart TD
    - The gate executes the rulesets' toolchain commands and a deviation scan: suppressions only with permitted `AEGIS-DEVIATION` markers.
    - Handbooks: `docs/{user,operator,technical,hosting}` as separate MkDocs sites (HTML + PDF); user help under `/help`, admin help (incl. SBOM and third-party licenses) under `/admin-help` for administrators only; use-case documentation coverage is traced.
    - Rust workspaces: the `architecture` stage enforces the layer policy on the crate graph (`aegis init --profile web-enterprise --name <project>` scaffolds domain / application / storage / api / server crates).
-   - Decoupled, reusable rulesets for C11, C++, Rust, and Java operating across prompt instructions, review rubrics, and SAST linters.
+   - Decoupled, reusable rulesets for C11, C++20, and Rust operating across prompt instructions, review rubrics, and SAST linters.
 
 8. **Process Overview Page**
    - [`doc/process-dashboard.html`](doc/process-dashboard.html) is a static page that visualizes the process and the ISO 25010 axes; its CLI simulator covers only `trace`, `impact`, `issue` and `gate` (it reads no project data).
@@ -332,7 +332,7 @@ This repository (Aegis itself):
 │   ├── process-evaluation.md   # Process assessment, risks & mitigations
 │   ├── process-dashboard.html  # Static process overview page
 │   ├── prompts/                # Prompt playbook: 00 (spec import) … 08 (handbooks), incl. 04b test implementation
-│   ├── rules/                  # Rulesets: C11, C++, Java, Rust (rust-strict, rust-service, rust-egui,
+│   ├── rules/                  # Rulesets: C11, C++20, Rust (rust-strict, rust-service, rust-egui,
 │   │                           #   rust-web-enterprise + overlays rust-web-htmx / rust-web-pwa, rust-safety)
 │   ├── web-enterprise.yaml     # Profile: Rust web apps (ASVS L2, GDPR, layered workspace, handbooks)
 │   ├── enterprise.yaml         # Profile: backend services

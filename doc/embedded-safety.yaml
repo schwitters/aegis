@@ -12,7 +12,7 @@ language: c
 # --- Rulesets (Modular Composition) ------------------------------------------
 rulesets:
   - doc/rules/c11-embedded-safety.yaml
-  # - doc/rules/rust-safety.yaml
+  - doc/rules/rust-safety.yaml
 
 # --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
 quality_axes:
@@ -70,7 +70,7 @@ gate:
 
 # --- 2b. Implementation Loop (see doc/prompts/06_27b_implementation.md) -------
 agent_loop:
-  max_iterations: 3              # fast-gate attempts per task before the model must escalate
+  max_iterations: 4              # fast-gate attempts per task before the model must escalate
   fast_stages: [build, lint, test_freeze, tests]
 
 # --- 3. Deliverables ---------------------------------------------------------

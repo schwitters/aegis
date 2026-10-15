@@ -94,8 +94,8 @@ pub fn extract_metadata(content: &str) -> std::result::Result<Option<serde_yaml:
                 .filter(|l| !l.trim_start().starts_with("```"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let val: serde_yaml::Value =
-                serde_yaml::from_str(&inner).map_err(|e| format!("invalid YAML frontmatter: {}", e))?;
+            let val: serde_yaml::Value = serde_yaml::from_str(&inner)
+                .map_err(|e| format!("invalid YAML frontmatter: {}", e))?;
             if let Some(map) = val.as_mapping() {
                 if map.contains_key(&id_key) {
                     return Ok(Some(map.clone()));
@@ -132,13 +132,22 @@ pub fn extract_metadata(content: &str) -> std::result::Result<Option<serde_yaml:
 }
 
 /// Reads an ID list field (`[A, B]`, a single string, or absent). Entries that are not valid IDs are reported.
-fn id_list(map: &serde_yaml::Mapping, key: &str, errors: &mut Vec<String>, owner: &str) -> Vec<String> {
+fn id_list(
+    map: &serde_yaml::Mapping,
+    key: &str,
+    errors: &mut Vec<String>,
+    owner: &str,
+) -> Vec<String> {
     let Some(raw) = map.get(serde_yaml::Value::String(key.to_string())) else {
         return Vec::new();
     };
     let items: Vec<String> = match raw {
         serde_yaml::Value::Null => Vec::new(),
-        serde_yaml::Value::String(s) => s.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        serde_yaml::Value::String(s) => s
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
         serde_yaml::Value::Sequence(seq) => seq
             .iter()
             .map(|v| match v {
@@ -147,7 +156,10 @@ fn id_list(map: &serde_yaml::Mapping, key: &str, errors: &mut Vec<String>, owner
             })
             .collect(),
         other => {
-            errors.push(format!("INVALID  {}: field `{}` must be a list of IDs, got {:?}", owner, key, other));
+            errors.push(format!(
+                "INVALID  {}: field `{}` must be a list of IDs, got {:?}",
+                owner, key, other
+            ));
             return Vec::new();
         }
     };
@@ -157,7 +169,10 @@ fn id_list(map: &serde_yaml::Mapping, key: &str, errors: &mut Vec<String>, owner
         if full_id.is_match(&item) {
             ids.push(item);
         } else {
-            errors.push(format!("INVALID  {}: `{}` entry `{}` is not a valid artifact ID", owner, key, item));
+            errors.push(format!(
+                "INVALID  {}: `{}` entry `{}` is not a valid artifact ID",
+                owner, key, item
+            ));
         }
     }
     ids
@@ -165,7 +180,10 @@ fn id_list(map: &serde_yaml::Mapping, key: &str, errors: &mut Vec<String>, owner
 
 pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
     if !doc_dir.exists() {
-        trace.doc_errors.push(format!("INVALID  documentation directory {} does not exist", doc_dir.display()));
+        trace.doc_errors.push(format!(
+            "INVALID  documentation directory {} does not exist",
+            doc_dir.display()
+        ));
         return Ok(());
     }
 
@@ -188,7 +206,11 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
             .into_iter()
             .filter_map(|e| e.ok())
             .map(|e| e.into_path())
-            .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md") && !is_index_file(p))
+            .filter(|p| {
+                p.is_file()
+                    && p.extension().and_then(|s| s.to_str()) == Some("md")
+                    && !is_index_file(p)
+            })
             .collect();
         files.sort();
 
@@ -197,7 +219,9 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {
-                    trace.doc_errors.push(format!("INVALID  {}: unreadable ({})", shown, e));
+                    trace
+                        .doc_errors
+                        .push(format!("INVALID  {}: unreadable ({})", shown, e));
                     continue;
                 }
             };
@@ -244,18 +268,28 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
             match map.get(serde_yaml::Value::String("source".to_string())) {
                 None | Some(serde_yaml::Value::Null) => {}
                 Some(serde_yaml::Value::String(s)) => {
-                    trace.sources.insert(id_val.clone(), vec![s.trim().to_string()]);
+                    trace
+                        .sources
+                        .insert(id_val.clone(), vec![s.trim().to_string()]);
                 }
                 Some(serde_yaml::Value::Sequence(seq)) => {
-                    let list: Vec<String> = seq.iter().filter_map(|v| v.as_str()).map(|s| s.trim().to_string()).collect();
+                    let list: Vec<String> = seq
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .collect();
                     if list.len() != seq.len() {
-                        trace.doc_errors.push(format!("INVALID  {}: `source` entries must be strings", id_val));
+                        trace.doc_errors.push(format!(
+                            "INVALID  {}: `source` entries must be strings",
+                            id_val
+                        ));
                     }
                     trace.sources.insert(id_val.clone(), list);
                 }
-                Some(other) => trace
-                    .doc_errors
-                    .push(format!("INVALID  {}: `source` must be a string or a list, got {:?}", id_val, other)),
+                Some(other) => trace.doc_errors.push(format!(
+                    "INVALID  {}: `source` must be a string or a list, got {:?}",
+                    id_val, other
+                )),
             }
 
             match expected_prefix {
@@ -299,7 +333,8 @@ pub fn collect_documentation(docs_root: &Path, trace: &mut Trace) -> Result<()> 
     let mut files: Vec<PathBuf> = WalkDir::new(docs_root)
         .into_iter()
         .filter_entry(|e| {
-            !is_skipped_dir(e.path()) && !(e.path().is_dir() && e.file_name().to_str() == Some("site"))
+            !is_skipped_dir(e.path())
+                && !(e.path().is_dir() && e.file_name().to_str() == Some("site"))
         })
         .filter_map(|e| e.ok())
         .map(|e| e.into_path())
@@ -309,7 +344,12 @@ pub fn collect_documentation(docs_root: &Path, trace: &mut Trace) -> Result<()> 
     for path in files {
         let shown = path.display().to_string();
         let rel = path.strip_prefix(docs_root).unwrap_or(&path);
-        let Some(handbook) = rel.components().next().and_then(|c| c.as_os_str().to_str()).map(String::from) else {
+        let Some(handbook) = rel
+            .components()
+            .next()
+            .and_then(|c| c.as_os_str().to_str())
+            .map(String::from)
+        else {
             continue;
         };
         if rel.components().count() < 2 {
@@ -327,25 +367,38 @@ pub fn collect_documentation(docs_root: &Path, trace: &mut Trace) -> Result<()> 
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c.replace("\r\n", "\n"),
             Err(e) => {
-                trace.doc_errors.push(format!("INVALID  {}: unreadable ({})", shown, e));
+                trace
+                    .doc_errors
+                    .push(format!("INVALID  {}: unreadable ({})", shown, e));
                 continue;
             }
         };
-        let Some(rest) = content.strip_prefix("---\n") else { continue };
+        let Some(rest) = content.strip_prefix("---\n") else {
+            continue;
+        };
         let Some(end) = rest.find("\n---") else {
-            trace.doc_errors.push(format!("INVALID  {}: unterminated YAML frontmatter", shown));
+            trace
+                .doc_errors
+                .push(format!("INVALID  {}: unterminated YAML frontmatter", shown));
             continue;
         };
         let map = match serde_yaml::from_str::<serde_yaml::Value>(&rest[..end]) {
             Ok(serde_yaml::Value::Mapping(m)) => m,
             Ok(_) => continue,
             Err(e) => {
-                trace.doc_errors.push(format!("INVALID  {}: invalid YAML frontmatter: {}", shown, e));
+                trace.doc_errors.push(format!(
+                    "INVALID  {}: invalid YAML frontmatter: {}",
+                    shown, e
+                ));
                 continue;
             }
         };
         for id in id_list(&map, "documents", &mut trace.doc_errors, &shown) {
-            trace.doc_refs.entry(id).or_default().push((handbook.clone(), shown.clone()));
+            trace
+                .doc_refs
+                .entry(id)
+                .or_default()
+                .push((handbook.clone(), shown.clone()));
         }
     }
     Ok(())
@@ -370,14 +423,25 @@ pub fn collect_project(root: &Path, doc_dir: &Path, src_dirs: Option<&[PathBuf]>
     Ok(trace)
 }
 
-pub const SOURCE_EXTENSIONS: [&str; 10] = ["py", "js", "ts", "go", "rs", "java", "c", "cpp", "h", "hpp"];
+pub const SOURCE_EXTENSIONS: [&str; 10] =
+    ["py", "js", "ts", "go", "rs", "java", "c", "cpp", "h", "hpp"];
 
 /// Build output, dependencies and VCS/tool folders are never scanned (they are not the project's source).
 pub fn is_skipped_dir(path: &Path) -> bool {
     path.is_dir()
         && matches!(
             path.file_name().and_then(|s| s.to_str()),
-            Some("target" | "node_modules" | ".git" | ".hg" | ".svn" | "build" | "dist" | "vendor" | "mutants.out")
+            Some(
+                "target"
+                    | "node_modules"
+                    | ".git"
+                    | ".hg"
+                    | ".svn"
+                    | "build"
+                    | "dist"
+                    | "vendor"
+                    | "mutants.out"
+            )
         )
 }
 
@@ -385,7 +449,11 @@ pub fn is_skipped_dir(path: &Path) -> bool {
 pub fn source_files(src_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for src_dir in src_dirs {
-        for entry in WalkDir::new(src_dir).into_iter().filter_entry(|e| !is_skipped_dir(e.path())).filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(src_dir)
+            .into_iter()
+            .filter_entry(|e| !is_skipped_dir(e.path()))
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if path.is_file()
                 && path
@@ -406,9 +474,10 @@ pub fn collect_code(src_dirs: &[PathBuf], trace: &mut Trace) -> Result<()> {
     let existing: Vec<PathBuf> = src_dirs.iter().filter(|d| d.exists()).cloned().collect();
     if existing.is_empty() {
         let looked: Vec<String> = src_dirs.iter().map(|d| d.display().to_string()).collect();
-        trace
-            .doc_errors
-            .push(format!("INVALID  no source directory found (looked in: {})", looked.join(", ")));
+        trace.doc_errors.push(format!(
+            "INVALID  no source directory found (looked in: {})",
+            looked.join(", ")
+        ));
         return Ok(());
     }
 
@@ -419,9 +488,11 @@ pub fn collect_code(src_dirs: &[PathBuf], trace: &mut Trace) -> Result<()> {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                trace
-                    .doc_errors
-                    .push(format!("INVALID  {}: unreadable source file ({})", path.display(), e));
+                trace.doc_errors.push(format!(
+                    "INVALID  {}: unreadable source file ({})",
+                    path.display(),
+                    e
+                ));
                 continue;
             }
         };
@@ -467,7 +538,11 @@ fn invert(map: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String>> 
 /// Downstream index: upstream ID (REQ/ARCH) -> ARCH, UC and TEST IDs that reference it.
 pub fn downstream(trace: &Trace) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for inverted in [invert(&trace.arch_satisfies), invert(&trace.uc_implements), invert(&trace.test_verifies)] {
+    for inverted in [
+        invert(&trace.arch_satisfies),
+        invert(&trace.uc_implements),
+        invert(&trace.test_verifies),
+    ] {
         for (k, vs) in inverted {
             out.entry(k).or_default().extend(vs);
         }
@@ -479,7 +554,13 @@ pub fn downstream(trace: &Trace) -> BTreeMap<String, Vec<String>> {
     out
 }
 
-pub fn build_rows(trace: &Trace) -> (Vec<TraceRow>, BTreeMap<String, Vec<String>>, BTreeMap<String, Vec<String>>) {
+pub type TraceRowsAndMaps = (
+    Vec<TraceRow>,
+    BTreeMap<String, Vec<String>>,
+    BTreeMap<String, Vec<String>>,
+);
+
+pub fn build_rows(trace: &Trace) -> TraceRowsAndMaps {
     let req_to_uc = invert(&trace.uc_implements);
     let req_to_test = invert(&trace.test_verifies);
     let req_to_arch = invert(&trace.arch_satisfies);
@@ -505,7 +586,10 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
     let arch_to_test = invert(&trace.test_verifies);
 
     if trace.requirements.is_empty() {
-        problems.push("EMPTY    no requirements defined under doc/requirements/ — nothing is traced".to_string());
+        problems.push(
+            "EMPTY    no requirements defined under doc/requirements/ — nothing is traced"
+                .to_string(),
+        );
     }
 
     // 1. Gaps
@@ -523,7 +607,10 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
             problems.push(format!("GAP      {}: no test in test plan", row.req));
         }
         if row.code.is_empty() {
-            problems.push(format!("GAP      {}: no @implements annotation in code", row.req));
+            problems.push(format!(
+                "GAP      {}: no @implements annotation in code",
+                row.req
+            ));
         }
     }
     for (arch, reqs) in &trace.arch_satisfies {
@@ -531,7 +618,10 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
             problems.push(format!("GAP      {}: satisfies no requirement", arch));
         }
         if !arch_to_test.contains_key(arch) {
-            problems.push(format!("GAP      {}: no integration test verifies this architecture element", arch));
+            problems.push(format!(
+                "GAP      {}: no integration test verifies this architecture element",
+                arch
+            ));
         }
     }
     for (uc, reqs) in &trace.uc_implements {
@@ -555,23 +645,35 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
     for (req, locs) in &trace.code_impl {
         if !known_reqs.contains(req) {
             let loc = locs.first().map(|s| s.as_str()).unwrap_or("unknown");
-            problems.push(format!("ORPHAN   {}: annotated in code ({}), but no requirement defined", req, loc));
+            problems.push(format!(
+                "ORPHAN   {}: annotated in code ({}), but no requirement defined",
+                req, loc
+            ));
         }
     }
 
     // 3. Orphaned upstream references in ARCH / UC / TEST metadata
-    let check_refs = |problems: &mut Vec<String>, owner: &str, refs: &[String], allowed: &[&str]| {
-        for r in refs {
-            let exists = (r.starts_with("REQ-") && known_reqs.contains(r))
-                || (r.starts_with("ARCH-") && known_arch.contains(r));
-            let prefix_ok = allowed.iter().any(|p| r.starts_with(p));
-            if !prefix_ok {
-                problems.push(format!("INVALID  {}: may not reference {} (allowed: {})", owner, r, allowed.join(", ")));
-            } else if !exists {
-                problems.push(format!("ORPHAN   {}: references {}, which does not exist", owner, r));
+    let check_refs =
+        |problems: &mut Vec<String>, owner: &str, refs: &[String], allowed: &[&str]| {
+            for r in refs {
+                let exists = (r.starts_with("REQ-") && known_reqs.contains(r))
+                    || (r.starts_with("ARCH-") && known_arch.contains(r));
+                let prefix_ok = allowed.iter().any(|p| r.starts_with(p));
+                if !prefix_ok {
+                    problems.push(format!(
+                        "INVALID  {}: may not reference {} (allowed: {})",
+                        owner,
+                        r,
+                        allowed.join(", ")
+                    ));
+                } else if !exists {
+                    problems.push(format!(
+                        "ORPHAN   {}: references {}, which does not exist",
+                        owner, r
+                    ));
+                }
             }
-        }
-    };
+        };
     for (arch, reqs) in &trace.arch_satisfies {
         check_refs(&mut problems, arch, reqs, &["REQ-"]);
     }
@@ -603,7 +705,10 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
         for (id, pages) in &trace.doc_refs {
             if !trace.artifacts.contains_key(id) {
                 let page = pages.first().map(|(_, f)| f.as_str()).unwrap_or("unknown");
-                problems.push(format!("ORPHAN   {}: documented in {}, but not defined", id, page));
+                problems.push(format!(
+                    "ORPHAN   {}: documented in {}, but not defined",
+                    id, page
+                ));
             }
         }
     }
@@ -617,7 +722,10 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
     for (t, locs) in &trace.test_annot {
         if !known_tests.contains(t) {
             let loc = locs.first().map(|s| s.as_str()).unwrap_or("unknown");
-            problems.push(format!("ORPHAN   {}: annotated in test ({}), but not in test plan", t, loc));
+            problems.push(format!(
+                "ORPHAN   {}: annotated in test ({}), but not in test plan",
+                t, loc
+            ));
         }
     }
 

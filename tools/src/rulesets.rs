@@ -89,6 +89,15 @@ pub struct ForbiddenPattern {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRubricItem {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub check: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RulesetFile {
     pub ruleset: String,
     #[serde(default)]
@@ -108,6 +117,8 @@ pub struct RulesetFile {
     #[serde(default)]
     pub forbidden_patterns: Vec<ForbiddenPattern>,
     #[serde(default)]
+    pub review_rubric: Vec<ReviewRubricItem>,
+    #[serde(default)]
     pub rules: Vec<RuleItem>,
 }
 
@@ -124,7 +135,12 @@ impl RulesetFile {
 
     /// Extra clippy flags declared by the ruleset (v2 `toolchain.clippy.flags`, else v1 `linter_config.flags`).
     pub fn clippy_flags(&self) -> Vec<String> {
-        if let Some(flags) = self.toolchain.as_ref().and_then(|t| t.clippy.as_ref()).map(|c| c.flags.clone()) {
+        if let Some(flags) = self
+            .toolchain
+            .as_ref()
+            .and_then(|t| t.clippy.as_ref())
+            .map(|c| c.flags.clone())
+        {
             return flags;
         }
         match &self.linter_config {
@@ -173,7 +189,11 @@ pub fn load_referenced(root: &Path, profile: &Profile) -> Result<Vec<RulesetFile
         .map(|rel| {
             let full = root.join(rel);
             if !full.exists() {
-                anyhow::bail!("Profile {} references missing ruleset {}", profile.profile, rel);
+                anyhow::bail!(
+                    "Profile {} references missing ruleset {}",
+                    profile.profile,
+                    rel
+                );
             }
             load_ruleset(&full)
         })
@@ -182,20 +202,29 @@ pub fn load_referenced(root: &Path, profile: &Profile) -> Result<Vec<RulesetFile
 
 /// Parses one ruleset file. Fail closed: unreadable or unparsable rulesets are errors, never skipped.
 pub fn load_ruleset(path: &Path) -> Result<RulesetFile> {
-    let content = fs::read_to_string(path).with_context(|| format!("Failed to read ruleset {}", path.display()))?;
-    serde_yaml::from_str::<RulesetFile>(&content).with_context(|| format!("Failed to parse ruleset {}", path.display()))
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read ruleset {}", path.display()))?;
+    serde_yaml::from_str::<RulesetFile>(&content)
+        .with_context(|| format!("Failed to parse ruleset {}", path.display()))
 }
 
 /// The rulesets a profile references (paths relative to `root`). A referenced file that does not exist is an error.
 /// Without a profile (or with an empty `rulesets:` list) every `*.yaml` under `doc/rules/` is loaded, as
 /// `aegis instructions` always did.
-pub fn load_for_profile(root: &Path, profile: Option<&Profile>) -> Result<Vec<(PathBuf, RulesetFile)>> {
+pub fn load_for_profile(
+    root: &Path,
+    profile: Option<&Profile>,
+) -> Result<Vec<(PathBuf, RulesetFile)>> {
     let mut files: Vec<PathBuf> = Vec::new();
     if let Some(prof) = profile {
         for rel in &prof.rulesets {
             let full = root.join(rel);
             if !full.exists() {
-                anyhow::bail!("Profile {} references missing ruleset {}", prof.profile, rel);
+                anyhow::bail!(
+                    "Profile {} references missing ruleset {}",
+                    prof.profile,
+                    rel
+                );
             }
             files.push(full);
         }
@@ -213,5 +242,8 @@ pub fn load_for_profile(root: &Path, profile: Option<&Profile>) -> Result<Vec<(P
             files.sort();
         }
     }
-    files.into_iter().map(|p| load_ruleset(&p).map(|rf| (p, rf))).collect()
+    files
+        .into_iter()
+        .map(|p| load_ruleset(&p).map(|rf| (p, rf)))
+        .collect()
 }

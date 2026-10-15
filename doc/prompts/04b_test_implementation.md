@@ -1,8 +1,8 @@
 # Prompt 04b: Test Implementation (Before Production Code)
 
 **Target Model:** Test agent — a Frontier model or a separate agent run. **Never the implementation model**: the model that must pass the tests must not be the one that writes them.  
-**Preconditions:** Test plan reviewed, specification baseline approved (`aegis baseline --approve`).  
-**Output Artifacts:** Executable tests in dedicated test files (`@verifies TEST-xxx`), then `doc/testplan/tests.lock`.
+**Preconditions:** Test plan reviewed, specification baseline approved (`aegis baseline --approve`), public interface contract/stubs defined in production modules.  
+**Output Artifacts:** Executable tests in dedicated test files (`@verifies TEST-xxx`), compiling stubs in `src/`, then `doc/testplan/tests.lock`.
 
 ---
 
@@ -20,21 +20,25 @@ REQUIREMENTS & ARCHITECTURE (for interface signatures):
 <Paste the referenced REQ-xxx.md and ARCH-xxx.md files, especially public interface contracts>
 
 TARGET LANGUAGE & TEST HARNESS:
-<e.g. Rust (cargo test, tests/ directory), C11 (ctest + Unity), Java (JUnit 5), Python (pytest)>
+<e.g. Rust (cargo test, tests/ directory), C11 (ctest + Unity), C++20 (GTest / Catch2)>
 
 RULES:
 1. One test function per test step/variation; every test function carries a comment `@verifies TEST-XXX`.
 2. Tests live in DEDICATED test files (Rust: tests/*.rs or `#[cfg(test)] #[path = "x_tests.rs"] mod tests;`),
    never in a file that contains production code — mixed files cannot be frozen.
-3. Code against the public interfaces declared in the architecture. Where production code does not exist yet,
-   create only the minimal compiling stubs (signatures returning a "not implemented" error), clearly marked
-   `// STUB: replaced by implementation`. Stubs are production code: they go into src/, not into test files.
-4. Assert observable behavior and exact error variants, including every edge and failure variation in the plan.
+3. CONTRACT / STUB FREEZE: Prior to freezing tests, create and verify compiling stubs for all public interfaces,
+   traits, structs, and headers declared in the architecture (`todo!()` in Rust, empty stub bodies returning error
+   in C11/C++20) in the production modules (`src/` or headers), clearly marked `// STUB: replaced by implementation`.
+   Stubs are production code: they go into src/, not into test files.
+4. COMPILATION CHECK: Tests MUST compile cleanly without errors against these stubs (e.g. `cargo test --no-run` in
+   Rust, compilation pass in C11/C++20). Never freeze tests against imaginary or non-compiling signatures.
+5. Assert observable behavior and exact error variants, including every edge and failure variation in the plan.
    No assertions that pass for a trivially wrong implementation (e.g. only `is_ok()` where a value is specified).
-5. Deterministic: no sleeps, no wall clock, no network, no random seeds without fixing them.
-6. Every test must FAIL against the stubs, for the reason the test plan describes.
+6. Deterministic: no sleeps, no wall clock, no network, no random seeds without fixing them.
+7. Every test must FAIL against the stubs, for the reason the test plan describes (e.g. `not yet implemented`).
 
 OUTPUT:
+- The compiling stub declarations in `src/`.
 - The test files with full content.
 - A table: TEST-ID | test function(s) | file | expected failure against the stubs.
 ```

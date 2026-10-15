@@ -70,7 +70,10 @@ pub fn parse_issue_file(path: &Path) -> Result<Issue> {
             body,
         })
     } else {
-        bail!("Keine YAML-Frontmatter (--- ... ---) in {} gefunden", path.display());
+        bail!(
+            "Keine YAML-Frontmatter (--- ... ---) in {} gefunden",
+            path.display()
+        );
     }
 }
 
@@ -155,7 +158,9 @@ pub fn create_issue(doc_dir: &Path, opts: CreateIssueOptions) -> Result<(String,
 
     let yaml_str = serde_yaml::to_string(&meta)?;
 
-    let context_text = opts.context.unwrap_or_else(|| "Derived automatically from observation / review.".to_string());
+    let context_text = opts
+        .context
+        .unwrap_or_else(|| "Derived automatically from observation / review.".to_string());
     let desc_text = opts.description.unwrap_or_else(|| opts.title.clone());
 
     let full_content = format!(

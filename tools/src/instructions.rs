@@ -23,7 +23,11 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
             p1
         } else {
             let p2 = doc_dir.join("enterprise.yaml");
-            if p2.exists() { p2 } else { doc_dir.join("embedded-safety.yaml") }
+            if p2.exists() {
+                p2
+            } else {
+                doc_dir.join("embedded-safety.yaml")
+            }
         }
     });
 
@@ -75,11 +79,24 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     let mut rule_count = 0;
 
     for (_, rf) in &rulesets {
-        out.push_str(&format!("### Ruleset: {} ({})\n\n", rf.ruleset, rf.standard.as_deref().unwrap_or("Standard")));
-        let fence = rulesets::fence_language(rf.language.as_deref().or(profile.as_ref().and_then(|p| p.language.as_deref())));
+        out.push_str(&format!(
+            "### Ruleset: {} ({})\n\n",
+            rf.ruleset,
+            rf.standard.as_deref().unwrap_or("Standard")
+        ));
+        let fence = rulesets::fence_language(
+            rf.language
+                .as_deref()
+                .or(profile.as_ref().and_then(|p| p.language.as_deref())),
+        );
         for rule in &rf.rules {
             rule_count += 1;
-            out.push_str(&format!("- **[{}] {}** (Severity: {})\n", rule.id, rule.title, rule.severity.as_deref().unwrap_or("error")));
+            out.push_str(&format!(
+                "- **[{}] {}** (Severity: {})\n",
+                rule.id,
+                rule.title,
+                rule.severity.as_deref().unwrap_or("error")
+            ));
             out.push_str(&format!("  *Instruction:* {}\n", rule.instruction.trim()));
             if let Some(ref rat) = rule.rationale {
                 out.push_str(&format!("  *Rationale:* {}\n", rat.trim()));
@@ -121,7 +138,9 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     out.push_str("## 3. Mandatory Source Code Annotations\n\n");
     out.push_str("You **MUST** explicitly link code and tests to specification IDs:\n\n");
     out.push_str("1. **Source Code Functions / Structs:**\n");
-    out.push_str("   Above every implemented function, method, or struct, add a comment containing:\n");
+    out.push_str(
+        "   Above every implemented function, method, or struct, add a comment containing:\n",
+    );
     out.push_str("   `@implements REQ-XXX`\n\n");
     out.push_str("2. **Unit & Integration Tests:**\n");
     out.push_str("   Above every automated test case, add a comment containing:\n");
@@ -255,11 +274,19 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     out.push_str("## 6. Definition of Done for Implementation Model\n\n");
     out.push_str("Before considering your task complete, verify that:\n");
     out.push_str("- [ ] Code compiles cleanly with zero warnings.\n");
-    out.push_str("- [ ] The fast gate (`aegis gate --only ...`, see 3b) is green for every task.\n");
-    out.push_str("- [ ] All frozen tests pass and none of them was modified (`aegis tests verify`).\n");
+    out.push_str(
+        "- [ ] The fast gate (`aegis gate --only ...`, see 3b) is green for every task.\n",
+    );
+    out.push_str(
+        "- [ ] All frozen tests pass and none of them was modified (`aegis tests verify`).\n",
+    );
     out.push_str("- [ ] Every requirement has at least one `@implements REQ-xxx` annotation.\n");
-    out.push_str("- [ ] Every task that could not be completed has an `ESCALATION-<REQ-ID>.md` report.\n");
-    out.push_str("- [ ] Zero hardcoded secrets, zero unhandled errors, zero undefined behaviors.\n");
+    out.push_str(
+        "- [ ] Every task that could not be completed has an `ESCALATION-<REQ-ID>.md` report.\n",
+    );
+    out.push_str(
+        "- [ ] Zero hardcoded secrets, zero unhandled errors, zero undefined behaviors.\n",
+    );
 
     if let Some(out_path) = opts.out {
         let full_out = opts.root.join(&out_path);

@@ -53,17 +53,33 @@ pub fn scan(
 ) -> Vec<String> {
     let compiled: Vec<(&ForbiddenPattern, Vec<Regex>, Option<Regex>)> = patterns
         .iter()
-        .map(|p| (p, p.paths.iter().map(|g| glob_regex(g)).collect(), Regex::new(&p.pattern).ok()))
+        .map(|p| {
+            (
+                p,
+                p.paths.iter().map(|g| glob_regex(g)).collect(),
+                Regex::new(&p.pattern).ok(),
+            )
+        })
         .collect();
     let mut findings = Vec::new();
     for (p, _, re) in &compiled {
         if re.is_none() {
-            findings.push(format!("INVALID  forbidden pattern of {}: `{}` is not a valid regex", p.rule, p.pattern));
+            findings.push(format!(
+                "INVALID  forbidden pattern of {}: `{}` is not a valid regex",
+                p.rule, p.pattern
+            ));
         }
     }
     for file in crate::traceability::source_files(dirs) {
-        let rel = file.strip_prefix(root).unwrap_or(&file).display().to_string();
-        let applicable: Vec<_> = compiled.iter().filter(|(_, g, re)| re.is_some() && matches_any(&rel, g)).collect();
+        let rel = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        let applicable: Vec<_> = compiled
+            .iter()
+            .filter(|(_, g, re)| re.is_some() && matches_any(&rel, g))
+            .collect();
         if applicable.is_empty() {
             continue;
         }
@@ -83,9 +99,16 @@ pub fn scan(
                 }
                 let marker = format!("AEGIS-DEVIATION({})", p.rule);
                 let covered = i > 0 && lines[i - 1].contains(&marker);
-                let permitted = rules.get(&p.rule) == Some(&DeviationRule::Permitted) && !matches_any(&rel, no_deviation_zones);
+                let permitted = rules.get(&p.rule) == Some(&DeviationRule::Permitted)
+                    && !matches_any(&rel, no_deviation_zones);
                 if !(covered && permitted) {
-                    findings.push(format!("PATTERN  {}:{}: [{}] {}", rel, i + 1, p.rule, p.message));
+                    findings.push(format!(
+                        "PATTERN  {}:{}: [{}] {}",
+                        rel,
+                        i + 1,
+                        p.rule,
+                        p.message
+                    ));
                 }
             }
         }

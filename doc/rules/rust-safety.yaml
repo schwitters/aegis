@@ -1,73 +1,165 @@
-# Ruleset: Rust Safety & Robustness
-# Alignment: Rust API Guidelines, Clippy Pedantic, Memory Invariant Safety
+# Ruleset: Rust Safety & Robustness (ISO 26262 / ASIL-D Embedded Safety)
+# Alignment: ISO 26262, MISRA Rust, Rust API Guidelines, Clippy Pedantic, Memory Invariant Safety
+# Schema v2
 
 ruleset: rust-safety
+schema_version: 2
+id_prefix: RULE-RUST
 description: >
-  Strict rules for safe, idiomatic, and robust Rust code.
-  Focus on minimal unsafe usage with proof obligations, clean error cascades
-  without panics, and zero-cost abstractions.
-standard: Rust 2021 Edition
+  Strict rules for safe, idiomatic, and robust Rust code in safety-critical systems (ISO 26262 / ASIL-D).
+  Mandatory #![no_std] and #![forbid(unsafe_code)], zero dynamic memory allocation, proof obligations for unsafe,
+  proven panic freedom in release binaries, formal verification with Kani and Miri, and MC/DC coverage.
+standard: ISO 26262 ASIL-D, Rust 2024 Edition (no_std)
 language: rust
 
-linter_config:
-  tool: clippy
-  flags:
-    - "-D"
-    - "warnings"
-    - "-D"
-    - "clippy::undocumented_unsafe_blocks"
-    - "-D"
-    - "clippy::unwrap_used"
-    - "-D"
-    - "clippy::expect_used"
-    - "-D"
-    - "clippy::panic"
+toolchain:
+  clippy:
+    flags:
+      - "-D"
+      - "warnings"
+      - "-D"
+      - "clippy::undocumented_unsafe_blocks"
+      - "-D"
+      - "clippy::multiple_unsafe_ops_per_block"
+      - "-D"
+      - "clippy::unwrap_used"
+      - "-D"
+      - "clippy::expect_used"
+      - "-D"
+      - "clippy::panic"
+      - "-D"
+      - "clippy::indexing_slicing"
+      - "-D"
+      - "clippy::arithmetic_side_effects"
+  gate_commands:
+    static_analysis:
+      - cargo +nightly miri test
+      - cargo kani
+    security:
+      - "! nm target/release/firmware.elf 2>/dev/null | grep -E 'rust_begin_unwind|core::panicking'"
+    coverage:
+      - cargo llvm-cov --mcdc --fail-under-lines 100
+
+deviation_policy:
+  marker: "// AEGIS-DEVIATION: <RULE-ID> <ISSUE-XXXX> -- <justification>"
+  placement: on the line directly above the deviating statement or suppression attribute
+  require_issue: true
+  forbid_in:
+    - "crates/*-domain/**"
+    - "src/domain/**"
+    - "src/safety/**"
 
 rules:
   - id: RULE-RUST-001
     title: Mandatory Documentation & Rationale for Unsafe
     category: memory_safety
     severity: error
+    enforcement: gate+review
+    deviation: permitted
+    legacy_id: RUST-UNSAFE
     instruction: >
-      Every 'unsafe' block must be preceded by a '// SAFETY:' comment explaining
-      formally why invariants (e.g., pointer validity, alignment, non-aliasing)
-      are preserved. In embedded modules, unsafe is strictly confined to hardware register access.
-    rationale: Provides auditable evidence for safety assumptions in code reviews.
-    linter_check: "clippy::undocumented_unsafe_blocks"
+      Every crate starts with #![forbid(unsafe_code)]. Unsafe is strictly confined to designated HAL/driver modules
+      below an explicit `// AEGIS-DEVIATION: RUST-UNSAFE <ISSUE-XXXX> -- <Grund>` marker. Every unsafe block must be
+      preceded by a `// SAFETY:` comment formally proving that hardware invariants (pointer validity, alignment,
+      register access semantics, non-aliasing) are preserved.
+    rationale: Provides auditable evidence for safety assumptions in ISO 26262 tool qualification and code audits.
+    checks:
+      - { tool: clippy, check: "clippy::undocumented_unsafe_blocks, clippy::multiple_unsafe_ops_per_block" }
+    linter_check: "clippy::undocumented_unsafe_blocks,clippy::multiple_unsafe_ops_per_block"
 
   - id: RULE-RUST-002
     title: Zero unwrap, expect, or panic in Production Paths
     category: error_handling
     severity: error
+    enforcement: gate+review
+    deviation: forbidden
     instruction: >
-      Never use '.unwrap()', '.expect()', or 'panic!()' in production execution flows.
-      Errors must be propagated using 'Result<T, E>' or 'Option<T>' via the '?' operator or pattern matching.
-    rationale: Prevents uncontrolled thread panics and service downtime.
-    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic"
+      Never use '.unwrap()', '.expect()', 'panic!()', 'todo!()' or 'unimplemented!()' in production execution flows.
+      Errors must be propagated using 'Result<T, DomainError>' via the '?' operator or exhaustive pattern matching.
+    rationale: Prevents uncontrolled core panics and system resets in safety-critical control loops.
+    checks:
+      - { tool: clippy, check: "clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing" }
+    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic,clippy::indexing_slicing"
 
   - id: RULE-RUST-003
     title: Explicit, Strongly Typed Domain Errors
     category: error_handling
     severity: error
+    enforcement: review
+    deviation: forbidden
     instruction: >
-      Public interfaces must expose domain-specific error enums (e.g., via 'thiserror').
-      Avoid opaque 'Box<dyn Error>' or stringly-typed error messages in libraries.
-    rationale: Allows callers to inspect and handle error variants deterministically.
+      Public interfaces must expose domain-specific error enums (e.g., via 'thiserror' or no_std compatible enums).
+      Avoid opaque dynamic errors or stringly-typed error representations.
+    rationale: Allows safety handlers to inspect and react to error variants deterministically.
 
   - id: RULE-RUST-004
     title: Newtype Pattern for Domain Range Safety
     category: types
     severity: warning
+    enforcement: review
+    deviation: permitted
     instruction: >
-      Values carrying specific domain semantics (e.g., Port, TimeoutMs, UserId, Celsius)
-      must be encapsulated as newtypes ('struct Port(u16)') to prevent accidental primitive interchange.
+      Values carrying specific domain semantics (e.g. ThrottlePos, VoltageMv, PressureBar)
+      must be encapsulated as newtypes ('struct ThrottlePos(u16)') with fallible 'TryFrom' constructors ("Parse, don't validate").
     rationale: Compile-time type safety with zero runtime overhead (Zero-Cost Abstraction).
 
   - id: RULE-RUST-005
     title: Send & Sync Invariant Proofs
     category: concurrency
     severity: error
+    enforcement: review
+    deviation: forbidden
     instruction: >
       Manual implementations of 'Send' or 'Sync' are forbidden unless accompanied
-      by an explicit proof of thread safety in a '// SAFETY:' comment.
-    rationale: Prevents data races across thread boundaries.
+      by an explicit proof of thread/interrupt safety in a '// SAFETY:' comment.
+    rationale: Prevents data races across interrupt service routines and thread boundaries.
+
+  - id: RULE-RUST-006
+    title: Mandatory #![no_std] in Embedded Firmware
+    category: safety
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      All firmware crates must declare #![no_std] at the crate root. Zero reliance on host OS abstractions,
+      file systems, or dynamic runtime loaders.
+    rationale: Guarantees deterministic bare-metal execution on resource-constrained microcontrollers.
+
+  - id: RULE-RUST-007
+    title: Proven Panic Freedom in Release Binaries
+    category: safety
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Safety-critical release binaries must be provably panic-free. The gate checks via 'nm' / 'rust-objdump'
+      on the built release ELF that the symbols 'rust_begin_unwind' and 'core::panicking' do not exist in the binary.
+    rationale: ISO 26262 ASIL-D requires that unhandled panic states cannot occur at runtime.
+    checks:
+      - { tool: gate-script, check: "! nm target/release/firmware.elf | grep -E 'rust_begin_unwind|core::panicking'" }
+
+  - id: RULE-RUST-008
+    title: Formal Verification & Bounded Model Checking
+    category: verification
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Critical safety invariants for functions annotated with '@implements REQ-SAFETY-*' must undergo bounded model
+      checking via 'cargo kani' (proof harnesses) and undefined behavior checking via 'cargo +nightly miri test'.
+    rationale: Formal mathematical verification of memory safety and functional invariants under ASIL-D.
+    checks:
+      - { tool: gate-script, check: "cargo kani, cargo +nightly miri test" }
+
+  - id: RULE-RUST-009
+    title: Mandatory MC/DC Coverage for Safety Verification
+    category: testing
+    severity: error
+    enforcement: gate
+    deviation: forbidden
+    instruction: >
+      Tests must achieve 100% Modified Condition / Decision Coverage (MC/DC) as required by ISO 26262 ASIL-D,
+      verified via 'cargo llvm-cov' with MC/DC instrumentation or an equivalent certified adapter.
+    rationale: Structural coverage alone does not prove that every individual condition affects the decision outcome.
+    checks:
+      - { tool: gate-script, check: "cargo llvm-cov --mcdc --fail-under-lines 100" }

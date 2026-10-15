@@ -87,17 +87,31 @@ pub fn test_source(loc: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     let start = item_start(&lines, line.saturating_sub(1));
     let fn_re = Regex::new(r"\bfn\s+\w+").unwrap();
-    let header = (line.saturating_sub(1)..lines.len()).take(10).find(|&i| fn_re.is_match(lines[i]))?;
-    let end = item_end(&lines, header)?;
-    Some(lines[start..=end].join("\n"))
+    let header = (line.saturating_sub(1)..lines.len())
+        .take(10)
+        .find(|&i| fn_re.is_match(lines[i]));
+    if let Some(h) = header {
+        if let Some(end) = item_end(&lines, h) {
+            return Some(lines[start..=end].join("\n"));
+        }
+    }
+    let take_lines = lines.len().saturating_sub(start).min(30);
+    if take_lines > 0 {
+        Some(lines[start..start + take_lines].join("\n"))
+    } else {
+        None
+    }
 }
 
 /// Functions in `dirs` that are still stubs: body contains `todo!(` / `unimplemented!(`, or a `// STUB` marker.
 pub fn stubs(dirs: &[PathBuf], root: &Path) -> Vec<(String, String)> {
-    let fn_re = Regex::new(r"^\s*(pub(\([^)]*\))?\s+)?(const\s+)?(async\s+)?(unsafe\s+)?fn\s+\w+").unwrap();
+    let fn_re =
+        Regex::new(r"^\s*(pub(\([^)]*\))?\s+)?(const\s+)?(async\s+)?(unsafe\s+)?fn\s+\w+").unwrap();
     let mut out = Vec::new();
     for file in rust_files(dirs) {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         let lines: Vec<&str> = text.lines().collect();
         let mut i = 0;
         while i < lines.len() {
@@ -105,8 +119,15 @@ pub fn stubs(dirs: &[PathBuf], root: &Path) -> Vec<(String, String)> {
                 if let Some(end) = item_end(&lines, i) {
                     let start = item_start(&lines, i);
                     let item = lines[start..=end].join("\n");
-                    if item.contains("todo!(") || item.contains("unimplemented!(") || item.contains("// STUB") {
-                        let rel = file.strip_prefix(root).unwrap_or(&file).display().to_string();
+                    if item.contains("todo!(")
+                        || item.contains("unimplemented!(")
+                        || item.contains("// STUB")
+                    {
+                        let rel = file
+                            .strip_prefix(root)
+                            .unwrap_or(&file)
+                            .display()
+                            .to_string();
                         out.push((format!("{}:{}", rel, i + 1), item));
                     }
                     i = end + 1;
@@ -120,23 +141,46 @@ pub fn stubs(dirs: &[PathBuf], root: &Path) -> Vec<(String, String)> {
 }
 
 /// Definitions (`struct`, `enum`, `trait`, `type`) in `dirs` whose names occur in `texts`, keyed by name.
-pub fn referenced_types(texts: &[String], dirs: &[PathBuf], root: &Path) -> BTreeMap<String, (String, String)> {
+pub fn referenced_types(
+    texts: &[String],
+    dirs: &[PathBuf],
+    root: &Path,
+) -> BTreeMap<String, (String, String)> {
     let ident_re = Regex::new(r"\b[A-Z][A-Za-z0-9]+\b").unwrap();
-    let wanted: BTreeSet<String> = texts.iter().flat_map(|t| ident_re.find_iter(t).map(|m| m.as_str().to_string())).collect();
-    let def_re = Regex::new(r"^\s*(pub(\([^)]*\))?\s+)?(struct|enum|trait|type)\s+([A-Z][A-Za-z0-9]*)").unwrap();
+    let wanted: BTreeSet<String> = texts
+        .iter()
+        .flat_map(|t| ident_re.find_iter(t).map(|m| m.as_str().to_string()))
+        .collect();
+    let def_re =
+        Regex::new(r"^\s*(pub(\([^)]*\))?\s+)?(struct|enum|trait|type)\s+([A-Z][A-Za-z0-9]*)")
+            .unwrap();
     let mut out = BTreeMap::new();
     for file in rust_files(dirs) {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
-            let Some(cap) = def_re.captures(line) else { continue };
+            let Some(cap) = def_re.captures(line) else {
+                continue;
+            };
             let name = cap[4].to_string();
             if !wanted.contains(&name) || out.contains_key(&name) {
                 continue;
             }
             if let Some(end) = item_end(&lines, i) {
-                let rel = file.strip_prefix(root).unwrap_or(&file).display().to_string();
-                out.insert(name, (format!("{}:{}", rel, i + 1), lines[item_start(&lines, i)..=end].join("\n")));
+                let rel = file
+                    .strip_prefix(root)
+                    .unwrap_or(&file)
+                    .display()
+                    .to_string();
+                out.insert(
+                    name,
+                    (
+                        format!("{}:{}", rel, i + 1),
+                        lines[item_start(&lines, i)..=end].join("\n"),
+                    ),
+                );
             }
         }
     }

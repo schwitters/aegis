@@ -11,7 +11,10 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Layer of a workspace crate: the longest layer name that equals the crate name or is its `-<layer>` suffix.
-pub fn layer_of<'a>(crate_name: &str, layers: &'a BTreeMap<String, Vec<String>>) -> Option<&'a str> {
+pub fn layer_of<'a>(
+    crate_name: &str,
+    layers: &'a BTreeMap<String, Vec<String>>,
+) -> Option<&'a str> {
     layers
         .keys()
         .filter(|l| crate_name == l.as_str() || crate_name.ends_with(&format!("-{}", l)))
@@ -26,7 +29,11 @@ fn allows(list: &[String], layer: &str) -> bool {
 /// Checks `cargo metadata --format-version 1 --no-deps` output against the policy.
 /// `layers`: layer -> layers it may depend on (`*` = any). `restricted`: third-party crate -> layers that may depend
 /// on it directly. Unrestricted third-party crates are allowed everywhere.
-pub fn check(metadata: &Value, layers: &BTreeMap<String, Vec<String>>, restricted: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+pub fn check(
+    metadata: &Value,
+    layers: &BTreeMap<String, Vec<String>>,
+    restricted: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
     check_with_allowlist(metadata, layers, restricted, &BTreeMap::new())
 }
 
@@ -40,13 +47,18 @@ pub fn check_with_allowlist(
 ) -> Vec<String> {
     let mut problems = Vec::new();
     if layers.is_empty() {
-        problems.push("INVALID  gate.architecture.layers is empty — no layer policy to enforce".to_string());
+        problems.push(
+            "INVALID  gate.architecture.layers is empty — no layer policy to enforce".to_string(),
+        );
         return problems;
     }
     for (layer, deps) in layers {
         for d in deps {
             if d != "*" && !layers.contains_key(d) {
-                problems.push(format!("INVALID  layer {} may depend on unknown layer {}", layer, d));
+                problems.push(format!(
+                    "INVALID  layer {} may depend on unknown layer {}",
+                    layer, d
+                ));
             }
         }
     }
@@ -58,7 +70,10 @@ pub fn check_with_allowlist(
     for (krate, may) in restricted {
         for l in may {
             if l != "*" && !layers.contains_key(l) {
-                problems.push(format!("INVALID  restricted crate {} names unknown layer {}", krate, l));
+                problems.push(format!(
+                    "INVALID  restricted crate {} names unknown layer {}",
+                    krate, l
+                ));
             }
         }
     }
@@ -67,7 +82,10 @@ pub fn check_with_allowlist(
         problems.push("INVALID  cargo metadata output has no `packages`".to_string());
         return problems;
     };
-    let members: BTreeSet<&str> = packages.iter().filter_map(|p| p.get("name").and_then(|n| n.as_str())).collect();
+    let members: BTreeSet<&str> = packages
+        .iter()
+        .filter_map(|p| p.get("name").and_then(|n| n.as_str()))
+        .collect();
     if members.is_empty() {
         problems.push("EMPTY    workspace has no member crates".to_string());
     }
@@ -83,7 +101,11 @@ pub fn check_with_allowlist(
             continue;
         };
         let allowed_layers = &layers[layer];
-        let deps = pkg.get("dependencies").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+        let deps = pkg
+            .get("dependencies")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
         for dep in deps {
             let dep_name = dep.get("name").and_then(|n| n.as_str()).unwrap_or("?");
             let kind = dep.get("kind").and_then(|k| k.as_str()).unwrap_or("normal");
@@ -97,7 +119,11 @@ pub fn check_with_allowlist(
                         dep_name,
                         dep_layer,
                         kind,
-                        if allowed_layers.is_empty() { "none".to_string() } else { allowed_layers.join(", ") }
+                        if allowed_layers.is_empty() {
+                            "none".to_string()
+                        } else {
+                            allowed_layers.join(", ")
+                        }
                     )),
                     None => {} // reported as UNLAYERED for the dependency itself
                 }

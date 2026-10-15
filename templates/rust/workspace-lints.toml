@@ -15,30 +15,37 @@ rust_2018_idioms = { level = "deny", priority = -1 }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
-# RULE-RS-001 no panics on production paths (tests: see clippy.toml)
+# RULE-RS-001 crash protection / no panics on production paths (tests: see clippy.toml)
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
+indexing_slicing = "deny"
+exit = "deny"
 # RULE-RS-003 never discard results or futures
 let_underscore_must_use = "deny"
 let_underscore_future = "deny"
-# RULE-RS-004 / RULE-RS-005 unsafe and FFI
+# RULE-RS-004 / RULE-RS-005 unsafe and memory
 undocumented_unsafe_blocks = "deny"
 multiple_unsafe_ops_per_block = "deny"
 missing_safety_doc = "deny"
 not_unsafe_ptr_arg_deref = "deny"
 mem_forget = "deny"
-# RULE-RS-006 lossless conversions
+rc_buffer = "deny"
+rc_mutex = "deny"
+# RULE-RS-006 / RULE-RS-007 arithmetic and casts
 cast_possible_truncation = "deny"
 cast_sign_loss = "deny"
 cast_possible_wrap = "deny"
 cast_lossless = "deny"
-# RULE-RS-008 / RULE-RS-009 / RULE-RS-024 no blocking, bounded queues, no global mutation (see clippy.toml)
+arithmetic_side_effects = "deny"
+lossy_float_literal = "deny"
+# RULE-RS-008 / RULE-RS-009 / RULE-RS-024 async, concurrency and memory
 await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
+large_futures = "deny"
 unused_async = "deny"
 disallowed_methods = "deny"
 # RULE-RS-010 tracing only

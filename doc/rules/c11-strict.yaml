@@ -31,9 +31,11 @@ toolchain:
       - -Wconversion                         # RULE-C11S-006
       - -Wsign-conversion                    # RULE-C11S-006
       - -Wshadow
-      - -Wformat=2                           # RULE-C11S-021
-      - -Wvla                                # RULE-C11S-020
       - -Wstrict-prototypes                  # RULE-C11S-016
+      - -Wvla                                # RULE-C11S-020
+      - -fstack-protector-strong
+      - -D_FORTIFY_SOURCE=2
+      - -Wformat=2                           # RULE-C11S-021
       - -Wmissing-prototypes                 # RULE-C11S-016
       - -Werror=implicit-function-declaration  # RULE-C11S-016
       - -Wcast-qual                          # RULE-C11S-014
@@ -42,12 +44,13 @@ toolchain:
 
   clang_tidy:
     config_file: .clang-tidy                 # must enable every clang-tidy check referenced below
+    checks: "bugprone-*,cert-*,cppcoreguidelines-*,modernize-*"
     flags: ["--warnings-as-errors=*"]
 
   cppcheck:
     flags:
       - --std=c11
-      - --enable=warning,style,performance,portability
+      - --enable=all
       - --error-exitcode=1
       - --inline-suppr                       # suppressions only together with AEGIS-DEVIATION
       - --check-level=exhaustive             # cppcheck >= 2.11

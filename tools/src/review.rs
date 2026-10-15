@@ -9,7 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-pub const STAGES: [&str; 7] = ["spec", "requirements", "architecture", "usecases", "testplan", "implementation", "documentation"];
+pub const STAGES: [&str; 7] = [
+    "spec",
+    "requirements",
+    "architecture",
+    "usecases",
+    "testplan",
+    "implementation",
+    "documentation",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
@@ -54,12 +62,17 @@ pub struct Review {
 
 impl Review {
     pub fn open_findings(&self) -> usize {
-        self.meta.findings.iter().filter(|f| f.status == "open").count()
+        self.meta
+            .findings
+            .iter()
+            .filter(|f| f.status == "open")
+            .count()
     }
 }
 
 pub fn parse_review_file(path: &Path) -> Result<Review> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
     let content = content.replace("\r\n", "\n");
     let fm_re = Regex::new(r"(?s)^---\s*\n(.*?)\n---\s*(\n|$)").unwrap();
     let cap = fm_re
@@ -95,11 +108,20 @@ pub fn collect_reviews(doc_dir: &Path) -> Result<Vec<Review>> {
 /// `required` entries are `<stage>` or `<stage>:<n>` (n distinct, independent reviewers with a non-rejecting verdict).
 fn parse_required(entry: &str) -> Result<(String, usize)> {
     let (stage, n) = match entry.split_once(':') {
-        Some((s, n)) => (s.trim(), n.trim().parse::<usize>().with_context(|| format!("bad count in `{}`", entry))?),
+        Some((s, n)) => (
+            s.trim(),
+            n.trim()
+                .parse::<usize>()
+                .with_context(|| format!("bad count in `{}`", entry))?,
+        ),
         None => (entry.trim(), 1),
     };
     if !STAGES.contains(&stage) {
-        bail!("unknown review stage `{}` (allowed: {})", stage, STAGES.join(", "));
+        bail!(
+            "unknown review stage `{}` (allowed: {})",
+            stage,
+            STAGES.join(", ")
+        );
     }
     Ok((stage.to_string(), n))
 }
@@ -120,11 +142,21 @@ pub fn check(reviews: &[Review], issue_ids: &BTreeSet<String>, required: &[Strin
         }
         match m.verdict.as_str() {
             "approved" | "approved_with_revisions" | "rejected" => {}
-            "pending" => problems.push(format!("PENDING  {}: review not completed (verdict: pending)", m.id)),
+            "pending" => problems.push(format!(
+                "PENDING  {}: review not completed (verdict: pending)",
+                m.id
+            )),
             other => problems.push(format!("INVALID  {}: unknown verdict `{}`", m.id, other)),
         }
-        if m.author.as_deref().map(|a| a.eq_ignore_ascii_case(&m.reviewer)).unwrap_or(false) {
-            problems.push(format!("INVALID  {}: reviewer `{}` is the author — not an independent review", m.id, m.reviewer));
+        if m.author
+            .as_deref()
+            .map(|a| a.eq_ignore_ascii_case(&m.reviewer))
+            .unwrap_or(false)
+        {
+            problems.push(format!(
+                "INVALID  {}: reviewer `{}` is the author — not an independent review",
+                m.id, m.reviewer
+            ));
         }
         let mut fids = BTreeSet::new();
         for f in &m.findings {
@@ -134,22 +166,37 @@ pub fn check(reviews: &[Review], issue_ids: &BTreeSet<String>, required: &[Strin
             }
             let blocking = matches!(f.severity.as_str(), "high" | "critical");
             if !matches!(f.severity.as_str(), "low" | "medium" | "high" | "critical") {
-                problems.push(format!("INVALID  {}: unknown severity `{}`", fid, f.severity));
+                problems.push(format!(
+                    "INVALID  {}: unknown severity `{}`",
+                    fid, f.severity
+                ));
             }
-            let has_disposition = f.disposition.as_deref().map(|d| !d.trim().is_empty()).unwrap_or(false);
+            let has_disposition = f
+                .disposition
+                .as_deref()
+                .map(|d| !d.trim().is_empty())
+                .unwrap_or(false);
             match f.status.as_str() {
-                "open" if blocking => {
-                    problems.push(format!("OPEN     {} [{}]: {} — unresolved blocker", fid, f.severity, f.title))
-                }
+                "open" if blocking => problems.push(format!(
+                    "OPEN     {} [{}]: {} — unresolved blocker",
+                    fid, f.severity, f.title
+                )),
                 "open" => {}
-                "accepted" | "rejected" if !has_disposition => {
-                    problems.push(format!("INVALID  {}: status `{}` requires a disposition (rationale)", fid, f.status))
-                }
+                "accepted" | "rejected" if !has_disposition => problems.push(format!(
+                    "INVALID  {}: status `{}` requires a disposition (rationale)",
+                    fid, f.status
+                )),
                 "accepted" | "rejected" => {}
                 "deferred" => match f.issue.as_deref() {
                     Some(i) if issue_ids.contains(i) => {}
-                    Some(i) => problems.push(format!("ORPHAN   {}: deferred to {}, which does not exist", fid, i)),
-                    None => problems.push(format!("INVALID  {}: deferred findings must reference an ISSUE-xxxx", fid)),
+                    Some(i) => problems.push(format!(
+                        "ORPHAN   {}: deferred to {}, which does not exist",
+                        fid, i
+                    )),
+                    None => problems.push(format!(
+                        "INVALID  {}: deferred findings must reference an ISSUE-xxxx",
+                        fid
+                    )),
                 },
                 other => problems.push(format!("INVALID  {}: unknown status `{}`", fid, other)),
             }
@@ -163,7 +210,10 @@ pub fn check(reviews: &[Review], issue_ids: &BTreeSet<String>, required: &[Strin
     }
     for (stage, r) in &latest {
         if r.meta.verdict == "rejected" {
-            problems.push(format!("REJECTED {}: latest {} review rejects the artifact", r.meta.id, stage));
+            problems.push(format!(
+                "REJECTED {}: latest {} review rejects the artifact",
+                r.meta.id, stage
+            ));
         }
     }
 
@@ -173,7 +223,12 @@ pub fn check(reviews: &[Review], issue_ids: &BTreeSet<String>, required: &[Strin
                 let reviewers: BTreeSet<String> = reviews
                     .iter()
                     .filter(|r| r.meta.stage == stage && r.meta.blind)
-                    .filter(|r| matches!(r.meta.verdict.as_str(), "approved" | "approved_with_revisions"))
+                    .filter(|r| {
+                        matches!(
+                            r.meta.verdict.as_str(),
+                            "approved" | "approved_with_revisions"
+                        )
+                    })
                     .map(|r| r.meta.reviewer.to_lowercase())
                     .collect();
                 if reviewers.len() < n {
@@ -215,7 +270,11 @@ pub struct CreateReviewOptions {
 
 pub fn create_review(doc_dir: &Path, opts: CreateReviewOptions) -> Result<(String, PathBuf)> {
     if !STAGES.contains(&opts.stage.as_str()) {
-        bail!("Unknown stage `{}` (allowed: {})", opts.stage, STAGES.join(", "));
+        bail!(
+            "Unknown stage `{}` (allowed: {})",
+            opts.stage,
+            STAGES.join(", ")
+        );
     }
     let id = next_id(doc_dir)?;
     let dir = doc_dir.join("reviews");
@@ -244,7 +303,9 @@ pub fn create_review(doc_dir: &Path, opts: CreateReviewOptions) -> Result<(Strin
 }
 
 pub fn render_table(reviews: &[Review]) -> String {
-    let mut out = String::from("ID           STAGE           VERDICT                  REVIEWER         OPEN/TOTAL\n");
+    let mut out = String::from(
+        "ID           STAGE           VERDICT                  REVIEWER         OPEN/TOTAL\n",
+    );
     for r in reviews {
         out.push_str(&format!(
             "{:<12} {:<15} {:<24} {:<16} {}/{}\n",

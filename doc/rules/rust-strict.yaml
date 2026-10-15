@@ -48,15 +48,42 @@ toolchain:
 # Deviation policy: the only legal way to break a rule marked `deviation: permitted`.
 # -----------------------------------------------------------------------------
 deviation_policy:
-  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  marker: "// AEGIS-DEVIATION: <RULE-ID> <ISSUE-XXXX> -- <justification>"
   placement: on the line directly above the suppression attribute (several stacked attributes may share one marker)
-  suppression: "#[expect(<lint>, reason = \"...\")] only; #[allow(...)] is rejected by clippy::allow_attributes"
+  suppression: "#[expect(<lint>, reason = \"...\")] only; #[allow(...)] is rejected without an AEGIS-DEVIATION marker"
+  require_issue: true
+  forbid_in:
+    - "crates/*-domain/**"
+    - "src/domain/**"
+    - "src/domain.rs"
+    - "*-domain/**"
   gate_checks:
-    - every #[allow(..)], #![allow(..)], #[expect(..)] and #![expect(..)] sits directly below a marker
+    - every #[allow(..)], #![allow(..)], #[expect(..)] and #![expect(..)] in src/ sits directly below a marker
     - every marker references an existing rule ID whose deviation field is 'permitted'
-    - every marker has a non-empty justification
+    - every marker has a non-empty justification referencing an open ISSUE-xxxx
     - rules with 'deviation: forbidden' cannot be suppressed at all
+    - no deviations are permitted in the domain layer
   review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+# -----------------------------------------------------------------------------
+# Tier 2: Blind Review Rubric (Prompts 02 & 07)
+# -----------------------------------------------------------------------------
+review_rubric:
+  - id: RR-RUST-ASYNC
+    title: Mutex/RwLock Guards Across Await Points & Bounded Channels
+    prompt: >
+      Werden Mutex/RwLock-Guards vor .await-Punkten gedroppt? Werden bounded Channels statt unbounded Channels genutzt?
+    check: "Review async code for locks held across awaits and unbounded queues"
+  - id: RR-RUST-TYPES
+    title: Domain Invariants via Newtypes (Parse, Don't Validate)
+    prompt: >
+      Werden Domain-Invarianten über Newtypes (TryFrom) statt primitiver String/i64-Typen erzwungen ("Parse, don't validate")?
+    check: "Review domain types for primitive obsession and missing TryFrom validation"
+  - id: RR-RUST-TESTS
+    title: Exact Error Types and Boundary Values in Tests
+    prompt: >
+      Prüfen Tests exakte Fehlertypen und Grenzwerte (0, MAX, leerer Slice) statt nur .is_ok() / .is_err()?
+    check: "Review test assertions for exact error variants and extreme boundary inputs"
 
 # -----------------------------------------------------------------------------
 # Field reference (v2):
@@ -69,29 +96,32 @@ deviation_policy:
 
 rules:
   - id: RULE-RS-001
-    title: No Panics on Production Paths
+    title: No Panics on Production Paths (Crash-Protection)
     category: error_handling
     severity: error
     enforcement: gate+review
     deviation: permitted
     instruction: >
-      Never call .unwrap(), .expect(), panic!(), todo!(), unimplemented!() or unreachable!() outside #[cfg(test)]
-      code. Propagate failures with Result and the ? operator. An invariant that is provably impossible to violate
-      (e.g. a regex literal compiled at startup) may use .expect("why this cannot fail") only directly below an
-      AEGIS-DEVIATION marker plus #[expect(clippy::expect_used, reason = "...")]. Slice indexing that can go out of
-      range counts as a panic too: use .get() on data derived from input (see RULE-RS-007).
+      MUST NOT: Kein .unwrap(), .expect(), panic!(), todo!(), unimplemented!(), exit() oder indexing_slicing (arr[i])
+      in src/ (außerhalb von #[cfg(test)]). Propagate failures with Result and the ? operator. Tests (#[cfg(test)]
+      und tests/) dürfen unwrap_used, expect_used, panic und indexing_slicing verwenden. An invariant that is provably
+      impossible to violate (e.g. a regex literal compiled at startup) may use .expect("why this cannot fail") only
+      directly below an AEGIS-DEVIATION marker plus #[expect(clippy::expect_used, reason = "...")]. Slice indexing
+      that can go out of range counts as a panic too: use .get() on data derived from input (see RULE-RS-007).
     rationale: >
       A panic in a worker thread silently kills it; a panic in the UI thread or in a service request handler takes
       down the whole process and loses unsaved state.
     checks:
-      - { tool: clippy, check: "clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable" }
-      - { tool: clippy, check: "clippy.toml: allow-unwrap-in-tests, allow-expect-in-tests, allow-panic-in-tests = true" }
-    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic,clippy::todo,clippy::unimplemented,clippy::unreachable"
+      - { tool: clippy, check: "clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::todo, clippy::unimplemented, clippy::unreachable, clippy::indexing_slicing, clippy::exit" }
+      - { tool: clippy, check: "clippy.toml: allow-unwrap-in-tests, allow-expect-in-tests, allow-panic-in-tests, allow-indexing-slicing-in-tests = true" }
+    linter_check: "clippy::unwrap_used,clippy::expect_used,clippy::panic,clippy::todo,clippy::unimplemented,clippy::unreachable,clippy::indexing_slicing,clippy::exit"
     example_bad: |
       let port: u16 = std::env::var("PORT").unwrap().parse().unwrap();
+      let first = list[0];
     example_good: |
       let raw = std::env::var("PORT").map_err(|_| ConfigError::Missing("PORT"))?;
       let port: u16 = raw.parse().map_err(|e| ConfigError::Invalid { key: "PORT", source: e })?;
+      let first = list.get(0).ok_or(ConfigError::Empty)?;
 
   - id: RULE-RS-002
     title: Typed Domain Errors in Libraries, Context in Binaries
@@ -100,6 +130,7 @@ rules:
     enforcement: review
     deviation: forbidden
     instruction: >
+      MUST: Explizites Error-Handling via Result<T, DomainError> (thiserror). Keine Panics im Produktionscode.
       Every library crate defines its own error enum(s) with thiserror; variants carry the data a caller needs to
       react (path, id, limit) and keep the underlying error as #[source]. Public functions return Result<T, ThatError>,
       never Box<dyn Error>, anyhow::Error or String. anyhow (or eyre) is allowed only in binary crates (main, CLI
@@ -152,24 +183,28 @@ rules:
     title: Unsafe Only in Designated FFI Crates, Each Block Proven
     category: memory_safety
     severity: error
+    legacy_id: RUST-UNSAFE
     enforcement: gate+review
-    deviation: forbidden
+    deviation: permitted
     instruction: >
+      MUST NOT: Kein unsafe ohne `// AEGIS-DEVIATION: RUST-UNSAFE <ISSUE-XXXX> -- <Grund>` UND `// SAFETY:` Kommentar.
       Every crate starts with #![forbid(unsafe_code)] except crates explicitly designated as FFI crates (name ends
-      in -sys or -ffi and is listed in doc/architecture). In FFI crates: #![deny(unsafe_op_in_unsafe_fn)], one unsafe
-      operation per block, each block preceded by a `// SAFETY:` comment that names the invariant (pointer validity,
-      lifetime, alignment, aliasing, thread affinity) and why it holds here. Every `unsafe fn` documents its
-      contract in a `# Safety` doc section. Unsafe code is wrapped once in a safe API; callers never see raw pointers.
+      in -sys or -ffi and is listed in doc/architecture). In FFI crates or modules with explicit deviation:
+      #![deny(unsafe_op_in_unsafe_fn)], one unsafe operation per block, each block preceded by a `// SAFETY:` comment
+      that names the invariant (pointer validity, lifetime, alignment, aliasing, thread affinity) and why it holds here.
+      Every `unsafe fn` documents its contract in a `# Safety` doc section. Unsafe code is wrapped once in a safe API;
+      callers never see raw pointers.
     rationale: Confines the audit surface for memory safety to a few reviewed files.
     checks:
       - { tool: rustc,  check: "unsafe_code (forbid outside FFI crates), unsafe_op_in_unsafe_fn (deny)" }
-      - { tool: clippy, check: "clippy::undocumented_unsafe_blocks, clippy::multiple_unsafe_ops_per_block, clippy::missing_safety_doc" }
+      - { tool: clippy, check: "clippy::undocumented_unsafe_blocks, clippy::multiple_unsafe_ops_per_block, clippy::missing_safety_doc, clippy::mem_forget, clippy::rc_buffer, clippy::rc_mutex" }
       - { tool: miri,   check: "cargo +nightly miri test -p <ffi-free crates with unsafe> (where applicable)" }
-    linter_check: "rustc:unsafe_code,rustc:unsafe_op_in_unsafe_fn,clippy::undocumented_unsafe_blocks,clippy::multiple_unsafe_ops_per_block"
+    linter_check: "rustc:unsafe_code,rustc:unsafe_op_in_unsafe_fn,clippy::undocumented_unsafe_blocks,clippy::multiple_unsafe_ops_per_block,clippy::mem_forget,clippy::rc_buffer,clippy::rc_mutex"
     example_bad: |
       let ctx = unsafe { llama_init_from_model(model, params) };
       let n = unsafe { llama_n_embd(model) };
     example_good: |
+      // AEGIS-DEVIATION: RUST-UNSAFE ISSUE-0042 -- FFI call to C library
       // SAFETY: `self.model` is non-null (checked in `Model::load`) and outlives the context, which `Context`
       // borrows for `'m`; llama.cpp does not retain `params` after the call.
       let ctx = unsafe { sys::llama_init_from_model(self.model.as_ptr(), params) };
@@ -218,8 +253,8 @@ rules:
       converts f64 sample positions to f32).
     rationale: Silent truncation of file sizes, offsets or counts corrupts indexes and creates out-of-bounds reads.
     checks:
-      - { tool: clippy, check: "clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_lossless" }
-    linter_check: "clippy::cast_possible_truncation,clippy::cast_sign_loss,clippy::cast_possible_wrap,clippy::cast_lossless"
+      - { tool: clippy, check: "clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_possible_wrap, clippy::cast_lossless, clippy::lossy_float_literal" }
+    linter_check: "clippy::cast_possible_truncation,clippy::cast_sign_loss,clippy::cast_possible_wrap,clippy::cast_lossless,clippy::lossy_float_literal"
     example_bad: |
       let rows = stmt.query_row([], |r| r.get::<_, i64>(0))? as usize;
     example_good: |
@@ -257,15 +292,16 @@ rules:
     enforcement: gate+review
     deviation: forbidden
     instruction: >
+      MUST NOT: Kein blockierendes I/O (std::fs, std::net, std::thread::sleep) in async fn.
       Inside async fn and inside UI frame callbacks, never call blocking APIs: std::fs, std::net, std::thread::sleep,
       std::process::Command::output/status, synchronous SQLite, CPU-heavy loops (> ~1 ms). Move them to
       tokio::task::spawn_blocking, a dedicated worker thread, or tokio::fs/tokio::process. Never hold a std or
       parking_lot MutexGuard across .await; use tokio::sync::Mutex only when the lock must span an await.
     rationale: One blocked runtime worker or UI frame stalls every other request or makes the window freeze.
     checks:
-      - { tool: clippy, check: "clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::unused_async" }
+      - { tool: clippy, check: "clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::large_futures, clippy::unused_async" }
       - { tool: clippy, check: "clippy.toml disallowed-methods: std::thread::sleep" }
-    linter_check: "clippy::await_holding_lock,clippy::await_holding_refcell_ref,clippy::disallowed_methods"
+    linter_check: "clippy::await_holding_lock,clippy::await_holding_refcell_ref,clippy::large_futures,clippy::disallowed_methods"
     example_bad: |
       async fn thumbnail(path: PathBuf) -> Result<Vec<u8>, ThumbError> {
           let bytes = std::fs::read(&path)?;          // blocks a runtime worker
@@ -360,10 +396,11 @@ rules:
     enforcement: gate+review
     deviation: forbidden
     instruction: >
-      No credentials, tokens or keys in source, tests fixtures or default configs. Secrets are loaded from a file
-      with restrictive permissions (0600) or the OS credential store, held in secrecy::SecretString (or a newtype
-      whose Debug prints "[redacted]"), compared in constant time (subtle::ConstantTimeEq), and stored at rest only
-      as a hash when they are verification tokens.
+      MUST: Sensible Daten (Passwörter, Tokens, PII) müssen in secrecy::SecretBox<T> / SecretString oder
+      redigierende Newtypes gekapselt werden (Debug/Display gibt `[REDACTED]` aus). No credentials, tokens or keys
+      in source, tests fixtures or default configs. Secrets are loaded from a file with restrictive permissions (0600)
+      or the OS credential store, held in secrecy::SecretString / SecretBox<T>, compared in constant time
+      (subtle::ConstantTimeEq), and stored at rest only as a hash when they are verification tokens.
     rationale: Leaked tokens in logs, crash reports or Git history are the most common credential exposure.
     checks:
       - { tool: gate-script, check: "secret scan (gitleaks/trufflehog when installed) over the repository" }
@@ -402,7 +439,7 @@ rules:
       - { tool: gate-script, check: "rust-toolchain.toml present; workspace.package.rust-version set" }
 
   - id: RULE-RS-016
-    title: Warnings Fail Closed, Lints Configured Centrally
+    title: Warnings Fail Closed, Lints Configured Centrally (Anti-Cheat)
     category: build
     severity: error
     enforcement: gate
@@ -410,19 +447,20 @@ rules:
     instruction: >
       Lint levels are defined once in the workspace Cargo.toml [workspace.lints] (template:
       templates/rust/workspace-lints.toml) and every crate has [lints] workspace = true. The gate runs clippy with
-      -D warnings. #[allow(...)] is forbidden; a justified exception uses #[expect(lint, reason = "...")] directly
-      below an AEGIS-DEVIATION marker, so a stale exception becomes a warning itself. Never lower lint levels in a
-      crate, in build scripts or via RUSTFLAGS.
-    rationale: Suppressions must be visible, justified and self-cleaning.
+      -D warnings. Anti-Schummel-Regel: jedes lokale #[allow(...)] in src/**/*.rs ist verboten, sofern nicht in der
+      Zeile direkt darüber ein gültiger Marker steht: `// AEGIS-DEVIATION: <RULE-ID> <ISSUE-XXXX> -- <Begründung>`.
+      Im `domain`-Layer sind Abweichungen (AEGIS-DEVIATION) komplett verboten. Eine begründete Ausnahme außerhalb
+      der verbotenen Zonen nutzt #[expect(lint, reason = "...")] oder #[allow(...)] direkt unter dem Marker.
+    rationale: Suppressions must be visible, justified, tracked by an issue and absent from the core domain.
     checks:
       - { tool: clippy,      check: "clippy::allow_attributes, clippy::allow_attributes_without_reason" }
-      - { tool: gate-script, check: "aegis deviation scan: every allow/expect attribute below a valid marker" }
+      - { tool: gate-script, check: "aegis deviation scan: every allow/expect attribute below a valid marker with issue tracking" }
     linter_check: "clippy::allow_attributes,clippy::allow_attributes_without_reason"
     example_bad: |
       #[allow(clippy::cast_possible_truncation)]
       let sample = pos as f32;
     example_good: |
-      // AEGIS-DEVIATION(RULE-RS-006): sample position < 2^24, exactly representable in f32 (bounded by MAX_SAMPLES)
+      // AEGIS-DEVIATION: RULE-RS-006 ISSUE-0012 -- sample position < 2^24, exactly representable in f32
       #[expect(clippy::cast_possible_truncation, reason = "bounded by MAX_SAMPLES, see RULE-RS-006 deviation")]
       let sample = pos as f32;
 
@@ -459,23 +497,21 @@ rules:
     linter_check: "rustc:missing_docs,clippy::missing_errors_doc,clippy::missing_panics_doc,clippy::missing_safety_doc"
 
   - id: RULE-RS-019
-    title: Deterministic, Traceable Tests
+    title: Deterministic, Traceable Tests & Stub Freeze
     category: testing
     severity: error
     enforcement: gate+review
     deviation: forbidden
     instruction: >
+      MUST: Öffentliche Traits, Structs und Funktions-Stubs (`todo!()`) müssen vor dem Test-Freeze zusammen mit den
+      Tests kompilieren (`cargo test --no-run`) und bei Ausführung definiert wegen `not yet implemented` fehlschlagen.
       Every #[test] (and every integration test file's test fn) carries a doc comment `/// @verifies TEST-XXX`.
-      Tests are deterministic: no sleeps for synchronization (use channels, barriers, tokio::time::pause), no network
-      beyond loopback, no dependence on the developer's files or home directory (tempfile::TempDir), fixed seeds for
-      randomness. Parsers and normalizers get property tests (proptest) for "never panics" and round-trip
-      properties. Tests that need large external assets (models) are #[ignore = "<reason, CI job>"]d and run in a
-      named CI job, never silently skipped. Assertions are sharp: they check exact values and exact error variants
-      (assert!(matches!(r, Err(LoginError::Locked { .. })))), never only is_ok()/is_err(), and cover the boundaries the
-      test plan lists (0, 1, MAX, empty, malformed input, concurrent access).
-    rationale: Flaky tests erode the gate; traceability needs the annotation on the test itself.
+      Tests are deterministic: no sleeps for synchronization, no network beyond loopback, fixed seeds for randomness.
+      Assertions check exact values and exact error variants (e.g. assert!(matches!(r, Err(LoginError::Locked { .. })))),
+      never only is_ok()/is_err(), and cover boundary values (0, MAX, empty slice, malformed input).
+    rationale: Stubs prevent borrow checker/signature drift between models; sharp assertions prevent vacuous tests.
     checks:
-      - { tool: gate-script, check: "aegis trace: every TEST-xxx has an @verifies annotation" }
+      - { tool: gate-script, check: "cargo test --no-run; aegis tests freeze verifies failing stubs; aegis trace checks annotations" }
     example_good: |
       /// @verifies TEST-SRCH-004
       #[test]

@@ -13,7 +13,11 @@ pub const DEFAULT_RULE: &str = "RULE-RWE-015";
 
 /// Why a statement is destructive, or `None`.
 pub fn destructive(statement: &str) -> Option<&'static str> {
-    let s = statement.to_uppercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    let s = statement
+        .to_uppercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let has = |re: &str| Regex::new(re).unwrap().is_match(&s);
     if has(r"\bDROP (TABLE|COLUMN|INDEX|VIEW|TRIGGER|SCHEMA|DATABASE)\b") {
         Some("drops a schema object")
@@ -34,7 +38,11 @@ pub fn destructive(statement: &str) -> Option<&'static str> {
 
 /// Findings for one migration file (`location` prefixes them).
 pub fn check_text(text: &str, location: &str, rule: &str) -> Vec<String> {
-    let marker = Regex::new(&format!(r"AEGIS-DEVIATION\(\s*{}\s*\)\s*:\s*\S", regex::escape(rule))).unwrap();
+    let marker = Regex::new(&format!(
+        r"AEGIS-DEVIATION\(\s*{}\s*\)\s*:\s*\S",
+        regex::escape(rule)
+    ))
+    .unwrap();
     let mut findings = Vec::new();
     let mut comments: Vec<&str> = Vec::new();
     let mut stmt = String::new();
@@ -92,7 +100,20 @@ pub fn check_dir(root: &Path, dir: &Path, rule: &str) -> Result<(usize, Vec<Stri
     files.sort();
     let mut findings = Vec::new();
     for f in &files {
-        let text = std::fs::read_to_string(f).with_context(|| format!("Failed to read {}", f.display()))?;
+        let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.ends_with(".up.sql") {
+            let down_name = name.replacen(".up.sql", ".down.sql", 1);
+            let down_path = f.with_file_name(&down_name);
+            if !down_path.exists() {
+                let rel = f.strip_prefix(root).unwrap_or(f).display().to_string();
+                findings.push(format!(
+                    "MIGRATION {}: missing reversible down migration (expected companion {})",
+                    rel, down_name
+                ));
+            }
+        }
+        let text = std::fs::read_to_string(f)
+            .with_context(|| format!("Failed to read {}", f.display()))?;
         let rel = f.strip_prefix(root).unwrap_or(f).display().to_string();
         findings.extend(check_text(&text, &rel, rule));
     }

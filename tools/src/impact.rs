@@ -95,13 +95,23 @@ pub fn compute_impact(
     let mut affected_code = BTreeSet::new();
 
     for r in &seed_reqs {
-        for d in down.get(r).into_iter().flatten().filter(|d| d.starts_with("ARCH-")) {
+        for d in down
+            .get(r)
+            .into_iter()
+            .flatten()
+            .filter(|d| d.starts_with("ARCH-"))
+        {
             affected_arch.insert(d.clone());
         }
     }
     // Integration tests of affected architecture elements
     for a in &affected_arch {
-        for d in down.get(a).into_iter().flatten().filter(|d| d.starts_with("TEST-")) {
+        for d in down
+            .get(a)
+            .into_iter()
+            .flatten()
+            .filter(|d| d.starts_with("TEST-"))
+        {
             affected_test.insert(d.clone());
         }
     }
@@ -160,8 +170,13 @@ pub fn make_plan(kind: &str, depth: &str, _blast: &BlastRadius) -> Vec<String> {
 
     if depth.starts_with("functional") || depth.starts_with("concept") {
         if depth.starts_with("concept") {
-            plan.push("Revise the initial specification and affected architecture elements (ARCH-xxx)".to_string());
-            plan.push("Specification / architecture review (blind, 2 independent reviewers)".to_string());
+            plan.push(
+                "Revise the initial specification and affected architecture elements (ARCH-xxx)"
+                    .to_string(),
+            );
+            plan.push(
+                "Specification / architecture review (blind, 2 independent reviewers)".to_string(),
+            );
         }
         if kind == "wish" || kind == "feature" {
             plan.push("Formulate or extend requirement (assign REQ-ID)".to_string());
@@ -169,17 +184,29 @@ pub fn make_plan(kind: &str, depth: &str, _blast: &BlastRadius) -> Vec<String> {
             plan.push("Correct affected requirement".to_string());
         }
         plan.push("Requirement review with Frontier models (blind, parallel) — record as `aegis review create`".to_string());
-        plan.push("Adapt/extend architecture allocation (ARCH `satisfies`) and use case(s); link to REQ".to_string());
+        plan.push(
+            "Adapt/extend architecture allocation (ARCH `satisfies`) and use case(s); link to REQ"
+                .to_string(),
+        );
     }
 
-    plan.push("Update test plan: Add/update test(s) for changed requirement (verifies: REQ / ARCH)".to_string());
+    plan.push(
+        "Update test plan: Add/update test(s) for changed requirement (verifies: REQ / ARCH)"
+            .to_string(),
+    );
     plan.push("Resolve SUSPECT links, then approve the specification baseline (`aegis baseline --approve`)".to_string());
-    plan.push("Implement the tests (test agent), review them, freeze them (`aegis tests freeze`)".to_string());
+    plan.push(
+        "Implement the tests (test agent), review them, freeze them (`aegis tests freeze`)"
+            .to_string(),
+    );
     plan.push("Update agent instructions (if coding constraints are affected)".to_string());
     plan.push("Implementation loop by the implementation model (fast gate, bounded iterations, escalation)".to_string());
     plan.push("Run the full execution gate until green (`aegis gate --skip reviews`)".to_string());
     plan.push("Final review of the green diff with Frontier models — record findings (`aegis review create`)".to_string());
-    plan.push("Update affected handbook pages (`documents:`), review them (stage documentation)".to_string());
+    plan.push(
+        "Update affected handbook pages (`documents:`), review them (stage documentation)"
+            .to_string(),
+    );
     plan.push("Run the acceptance gate (all stages incl. reviews); close issue".to_string());
 
     plan
@@ -188,13 +215,32 @@ pub fn make_plan(kind: &str, depth: &str, _blast: &BlastRadius) -> Vec<String> {
 pub fn render_report_text(kind: &str, depth: &str, blast: &BlastRadius, plan: &[String]) -> String {
     let mut out = String::new();
     out.push_str("# Impact Analysis\n\n");
-    out.push_str(&format!("**Kind:** {}   **Impact Depth:** {}\n\n", kind, depth));
+    out.push_str(&format!(
+        "**Kind:** {}   **Impact Depth:** {}\n\n",
+        kind, depth
+    ));
     out.push_str("## Affected Artifacts (Blast Radius)\n\n");
 
-    let req_str = if blast.requirements.is_empty() { "—".to_string() } else { blast.requirements.join(", ") };
-    let arch_str = if blast.architecture.is_empty() { "—".to_string() } else { blast.architecture.join(", ") };
-    let uc_str = if blast.usecases.is_empty() { "—".to_string() } else { blast.usecases.join(", ") };
-    let test_str = if blast.tests.is_empty() { "—".to_string() } else { blast.tests.join(", ") };
+    let req_str = if blast.requirements.is_empty() {
+        "—".to_string()
+    } else {
+        blast.requirements.join(", ")
+    };
+    let arch_str = if blast.architecture.is_empty() {
+        "—".to_string()
+    } else {
+        blast.architecture.join(", ")
+    };
+    let uc_str = if blast.usecases.is_empty() {
+        "—".to_string()
+    } else {
+        blast.usecases.join(", ")
+    };
+    let test_str = if blast.tests.is_empty() {
+        "—".to_string()
+    } else {
+        blast.tests.join(", ")
+    };
 
     out.push_str(&format!("- Requirements: {}\n", req_str));
     out.push_str(&format!("- Architecture: {}\n", arch_str));

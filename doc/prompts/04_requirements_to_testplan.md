@@ -22,7 +22,7 @@ USE CASES LIST:
 <Paste list or content of all doc/usecases/UC-xxx.md files>
 
 TARGET LANGUAGE & TEST HARNESS:
-<e.g. Rust (cargo test), C11 (ctest / custom runner), C++20 (GTest / Catch2), Java (JUnit 5)>
+<e.g. Rust (cargo test), C11 (ctest / custom runner), C++20 (GTest / Catch2)>
 
 YOUR TASK:
 For every requirement (`REQ-xxx`), create at least one executable, falsifiable test plan specification (`TEST-xxx.md`).
@@ -69,4 +69,5 @@ type: unit   # unit | integration | performance | safety
 
 1. Review the test plan (record it: `aegis review create --stage testplan ...`).
 2. Approve the specification baseline: `aegis baseline` (dry run), then `aegis baseline --approve <name>`.
-3. Implement the tests with a test agent and freeze them: [`04b_test_implementation.md`](04b_test_implementation.md).
+3. Contract / Stub Freeze: Define public interfaces, traits, structs, and headers with compiling stubs (`todo!()` in Rust, empty stub bodies in C11/C++20) to fix signatures before test implementation.
+4. Implement the tests against the compiling stubs and freeze them: [`04b_test_implementation.md`](04b_test_implementation.md).

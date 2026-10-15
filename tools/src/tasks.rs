@@ -39,12 +39,21 @@ pub fn layer_ranks(layers: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, u
         }
         let r = layers
             .get(l)
-            .map(|deps| deps.iter().filter(|d| *d != "*").map(|d| rank(d, layers, seen) + 1).max().unwrap_or(0))
+            .map(|deps| {
+                deps.iter()
+                    .filter(|d| *d != "*")
+                    .map(|d| rank(d, layers, seen) + 1)
+                    .max()
+                    .unwrap_or(0)
+            })
             .unwrap_or(0);
         seen.remove(l);
         r
     }
-    let mut out: BTreeMap<String, usize> = layers.keys().map(|l| (l.clone(), rank(l, layers, &mut BTreeSet::new()))).collect();
+    let mut out: BTreeMap<String, usize> = layers
+        .keys()
+        .map(|l| (l.clone(), rank(l, layers, &mut BTreeSet::new())))
+        .collect();
     let max = out.values().copied().max().unwrap_or(0);
     for (l, deps) in layers {
         if deps.iter().any(|d| d == "*") {
@@ -62,7 +71,11 @@ fn demote(body: &str) -> String {
             if l.trim_start().starts_with("```") {
                 fence = !fence;
             }
-            if !fence && l.starts_with('#') && l.trim_start_matches('#').starts_with(' ') && !l.starts_with("######") {
+            if !fence
+                && l.starts_with('#')
+                && l.trim_start_matches('#').starts_with(' ')
+                && !l.starts_with("######")
+            {
                 format!("#{}", l)
             } else {
                 l.to_string()
@@ -78,7 +91,9 @@ fn body_of(path: &Path) -> String {
 }
 
 fn raw_body(path: &Path) -> String {
-    let content = std::fs::read_to_string(path).unwrap_or_default().replace("\r\n", "\n");
+    let content = std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
     if let Some(rest) = content.strip_prefix("---\n") {
         if let Some(end) = rest.find("\n---") {
             return rest[end + 4..].trim().to_string();
@@ -91,7 +106,9 @@ fn raw_body(path: &Path) -> String {
 fn meta_str(path: &Path, key: &str) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let map = traceability::extract_metadata(&content).ok()??;
-    map.get(serde_yaml::Value::String(key.to_string()))?.as_str().map(|s| s.trim().to_string())
+    map.get(serde_yaml::Value::String(key.to_string()))?
+        .as_str()
+        .map(|s| s.trim().to_string())
 }
 
 /// Test function names following `@verifies` annotations (Rust `fn`, Python `def`), else `file:line`.
@@ -103,9 +120,17 @@ fn test_functions(locs: &[String], root: &Path) -> Vec<String> {
             Some((f, l)) => (f, l.parse::<usize>().unwrap_or(0)),
             None => (loc.as_str(), 0),
         };
-        let rel = Path::new(file).strip_prefix(root).unwrap_or(Path::new(file)).display().to_string();
+        let rel = Path::new(file)
+            .strip_prefix(root)
+            .unwrap_or(Path::new(file))
+            .display()
+            .to_string();
         let text = std::fs::read_to_string(file).unwrap_or_default();
-        let name = text.lines().skip(line).take(8).find_map(|l| fn_re.captures(l).map(|c| c[1].to_string()));
+        let name = text
+            .lines()
+            .skip(line)
+            .take(8)
+            .find_map(|l| fn_re.captures(l).map(|c| c[1].to_string()));
         out.push(match name {
             Some(n) => format!("`{}` ({})", n, rel),
             None => format!("{}:{}", rel, line),
@@ -114,7 +139,13 @@ fn test_functions(locs: &[String], root: &Path) -> Vec<String> {
     out
 }
 
-pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: usize, draft: bool) -> Result<TaskReport> {
+pub fn generate(
+    root: &Path,
+    profile: &Profile,
+    profile_rel: &str,
+    max_tokens: usize,
+    draft: bool,
+) -> Result<TaskReport> {
     let doc_dir = root.join("doc");
     let src_dirs: Vec<PathBuf> = profile.source_paths(root);
     let trace = traceability::collect_project(root, &doc_dir, Some(&src_dirs))?;
@@ -125,7 +156,8 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
     let structural = baseline::blocking_for_approval(&traceability::find_problems(&trace, &rows));
     let mut preconditions = structural.clone();
     match baseline::load(&doc_dir)? {
-        None => preconditions.push("PRECONDITION no approved baseline (aegis baseline --approve)".to_string()),
+        None => preconditions
+            .push("PRECONDITION no approved baseline (aegis baseline --approve)".to_string()),
         Some(b) => {
             let d = baseline::diff(&b, &baseline::current(root, &trace)?);
             if !d.is_empty() {
@@ -138,11 +170,17 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
     }
     match testfreeze::verify(root, &doc_dir, &src_dirs) {
         Ok(p) if p.is_empty() => {}
-        Ok(p) => preconditions.push(format!("PRECONDITION frozen tests not intact: {}", p.join("; "))),
+        Ok(p) => preconditions.push(format!(
+            "PRECONDITION frozen tests not intact: {}",
+            p.join("; ")
+        )),
         Err(e) => preconditions.push(format!("PRECONDITION {:#}", e)),
     }
     if !preconditions.is_empty() && !draft {
-        return Ok(TaskReport { tasks: 0, problems: preconditions });
+        return Ok(TaskReport {
+            tasks: 0,
+            problems: preconditions,
+        });
     }
     let draft_note = if preconditions.is_empty() {
         String::new()
@@ -153,7 +191,10 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         )
     };
 
-    let arch_cfg = profile.get_stage_config("architecture").cloned().unwrap_or_default();
+    let arch_cfg = profile
+        .get_stage_config("architecture")
+        .cloned()
+        .unwrap_or_default();
     let ranks = layer_ranks(&arch_cfg.layers);
     let unranked = ranks.values().copied().max().unwrap_or(0) + 2;
     let rulesets = rulesets::load_referenced(root, profile).unwrap_or_default();
@@ -161,14 +202,27 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         .iter()
         .flat_map(|rf| rf.rules.iter())
         .map(|r| {
-            let first = r.instruction.split(". ").next().unwrap_or("").trim().trim_end_matches('.').to_string();
+            let first = r
+                .instruction
+                .split(". ")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_end_matches('.')
+                .to_string();
             (r.id.clone(), (r.title.clone(), first))
         })
         .collect();
     let rule_re = Regex::new(r"RULE-[A-Z]+-[0-9]+").unwrap();
     let agent_loop = profile.agent_loop();
-    let fast_gate = format!("aegis gate --profile {} --only {}", profile_rel, agent_loop.fast_stages.join(","));
-    let frozen: Vec<String> = testfreeze::read_lock(&doc_dir)?.map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    let fast_gate = format!(
+        "aegis gate --profile {} --only {}",
+        profile_rel,
+        agent_loop.fast_stages.join(",")
+    );
+    let frozen: Vec<String> = testfreeze::read_lock(&doc_dir)?
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
 
     // ARCH element -> (crate, layer)
     let mut arch_info: BTreeMap<String, (Option<String>, Option<String>)> = BTreeMap::new();
@@ -176,7 +230,10 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         let path = &trace.artifacts[id];
         let krate = meta_str(path, "crate");
         let layer = meta_str(path, "layer").or_else(|| {
-            krate.as_deref().and_then(|c| architecture::layer_of(c, &arch_cfg.layers)).map(String::from)
+            krate
+                .as_deref()
+                .and_then(|c| architecture::layer_of(c, &arch_cfg.layers))
+                .map(String::from)
         });
         if krate.is_none() && layer.is_none() {
             problems.push(format!("UNPLACED {}: no `crate:` or `layer:` in its metadata — task order and scope unknown", id));
@@ -184,7 +241,12 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         arch_info.insert(id.clone(), (krate, layer));
     }
     let arch_rank = |a: &str| -> usize {
-        arch_info.get(a).and_then(|(_, l)| l.as_ref()).and_then(|l| ranks.get(l)).copied().unwrap_or(unranked)
+        arch_info
+            .get(a)
+            .and_then(|(_, l)| l.as_ref())
+            .and_then(|l| ranks.get(l))
+            .copied()
+            .unwrap_or(unranked)
     };
 
     let mut req_to_arch: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -204,7 +266,9 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         let mut out = String::from("## Rules for This Task\n\n");
         for id in &ids {
             match rule_index.get(id) {
-                Some((title, first)) => out.push_str(&format!("- **{}** {} — {}.\n", id, title, first)),
+                Some((title, first)) => {
+                    out.push_str(&format!("- **{}** {} — {}.\n", id, title, first))
+                }
                 None => out.push_str(&format!("- **{}** (not in the profile's rulesets)\n", id)),
             }
         }
@@ -222,17 +286,33 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
             out.push_str("_None — escalate: a task without tests cannot be verified._\n\n");
         }
         for t in test_ids {
-            let title = trace.artifacts.get(t).and_then(|p| meta_str(p, "title")).unwrap_or_default();
-            let fns = trace.test_annot.get(t).map(|l| test_functions(l, root)).unwrap_or_default();
+            let title = trace
+                .artifacts
+                .get(t)
+                .and_then(|p| meta_str(p, "title"))
+                .unwrap_or_default();
+            let fns = trace
+                .test_annot
+                .get(t)
+                .map(|l| test_functions(l, root))
+                .unwrap_or_default();
             out.push_str(&format!(
                 "- **{}** {} — {}\n",
                 t,
                 title,
-                if fns.is_empty() { "NOT IMPLEMENTED (escalate)".to_string() } else { fns.join(", ") }
+                if fns.is_empty() {
+                    "NOT IMPLEMENTED (escalate)".to_string()
+                } else {
+                    fns.join(", ")
+                }
             ));
             for loc in trace.test_annot.get(t).into_iter().flatten() {
                 if let Some(src) = crate::codectx::test_source(loc) {
-                    let shown = Path::new(loc).strip_prefix(root).unwrap_or(Path::new(loc)).display().to_string();
+                    let shown = Path::new(loc)
+                        .strip_prefix(root)
+                        .unwrap_or(Path::new(loc))
+                        .display()
+                        .to_string();
                     sources.push_str(&format!("```rust\n// {}\n{}\n```\n\n", shown, src));
                 }
             }
@@ -278,13 +358,21 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
              3. Red: fix the root cause and repeat — at most **{} runs** for {}.\n\
              4. Still red, or the requirement is ambiguous / contradicts a frozen test: stop and write `ESCALATION-{}.md`\n   \
              (blocking question, category, attempts with gate excerpts, root-cause hypothesis, proposed resolution).\n\n\
+             ## Auto-Escalation Protocol\n\n\
+             If the fast gate remains red after at most **{} runs** due to complex compiler or borrow checker errors:\n\
+             1. STOP editing code.\n\
+             2. Create `ESCALATION-{}.md` with category `compiler-borrow-checker`, exact error lines from the compiler, and proposed resolution.\n\
+             3. Run `aegis escalate {}` to package the full escalation context (task packet, escalation report, compiler output, and working-tree diff vs HEAD) for the frontier model.\n\n\
              ## Done When\n\n- The fast gate is green and every test listed above passes.\n- No frozen file changed (`aegis tests verify`).\n",
             if scope.is_empty() { "the crate(s) of the architecture element(s) above".to_string() } else { scope.join(", ") },
             if frozen.is_empty() { "see doc/testplan/tests.lock".to_string() } else { frozen.join(", ") },
             fast_gate,
             agent_loop.max_iterations,
             task_id,
-            escalation
+            escalation,
+            agent_loop.max_iterations,
+            escalation,
+            task_id
         )
     };
 
@@ -326,7 +414,12 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
             let p = &trace.artifacts[uc];
             let body = body_of(p);
             texts.push(body.clone());
-            b.push_str(&format!("## Use Case {}: {}\n\n{}\n\n", uc, meta_str(p, "title").unwrap_or_default(), body));
+            b.push_str(&format!(
+                "## Use Case {}: {}\n\n{}\n\n",
+                uc,
+                meta_str(p, "title").unwrap_or_default(),
+                body
+            ));
         }
         for a in &archs {
             let p = &trace.artifacts[a];
@@ -363,7 +456,11 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         b.push_str(&code_section(&crate_dirs, &tests));
         b.push_str(&rules_section(&texts));
         b.push_str(&footer(&id, req, &crates));
-        packets.push(Packet { id, sort: (rank, 0, req.clone()), body: b });
+        packets.push(Packet {
+            id,
+            sort: (rank, 0, req.clone()),
+            body: b,
+        });
     }
 
     // One integration packet per architecture element with integration tests
@@ -374,7 +471,9 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         }
     }
     for (a, tests) in &arch_tests {
-        let Some(p) = trace.artifacts.get(a) else { continue };
+        let Some(p) = trace.artifacts.get(a) else {
+            continue;
+        };
         let (krate, layer) = arch_info.get(a).cloned().unwrap_or((None, None));
         let id = format!("TASK-{}", a);
         let body = body_of(p);
@@ -394,7 +493,11 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         b.push_str(&rules_section(std::slice::from_ref(&body)));
         let scope: Vec<String> = krate.iter().map(|c| format!("`crates/{}/`", c)).collect();
         b.push_str(&footer(&id, a, &scope));
-        packets.push(Packet { id, sort: (unranked + 1, 1, a.clone()), body: b });
+        packets.push(Packet {
+            id,
+            sort: (unranked + 1, 1, a.clone()),
+            body: b,
+        });
     }
 
     packets.sort_by(|x, y| x.sort.cmp(&y.sort));
@@ -423,13 +526,24 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
                 p.id, tokens, max_tokens
             ));
         }
-        let tests = p.body.lines().find(|l| l.starts_with("tests: ")).unwrap_or("tests: []").trim_start_matches("tests: ");
+        let tests = p
+            .body
+            .lines()
+            .find(|l| l.starts_with("tests: "))
+            .unwrap_or("tests: []")
+            .trim_start_matches("tests: ");
         readme.push_str(&format!(
             "| {} | [{}]({}.md) | {} | {} | {} |\n",
             i + 1,
             p.id,
             p.id,
-            if p.sort.0 > unranked { "integration".to_string() } else if p.sort.0 == unranked { "unplaced".to_string() } else { p.sort.0.to_string() },
+            if p.sort.0 > unranked {
+                "integration".to_string()
+            } else if p.sort.0 == unranked {
+                "unplaced".to_string()
+            } else {
+                p.sort.0.to_string()
+            },
             tests,
             tokens
         ));
@@ -441,5 +555,8 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
         fast_gate
     ));
     std::fs::write(dir.join("README.md"), readme)?;
-    Ok(TaskReport { tasks: packets.len(), problems })
+    Ok(TaskReport {
+        tasks: packets.len(),
+        problems,
+    })
 }
