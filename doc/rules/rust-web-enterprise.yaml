@@ -41,6 +41,9 @@ toolchain:
   gate_commands:
     lint:
       - "! grep -rsnE '\\|\\s*safe\\b' templates/ | grep -v 'SAFE-HTML:'"           # RULE-RWE-002
+      - aegis migrations check --dir migrations                                    # RULE-RWE-015
+    static_analysis:
+      - SQLX_OFFLINE=true cargo check --workspace --all-targets --quiet            # RULE-RWE-001: .sqlx/ current
     security:
       - gitleaks detect --no-banner --redact                                       # RULE-RWE-080
     deliverables:
@@ -78,10 +81,14 @@ rules:
       (pool.execute("..."), pool.fetch_all("...")) are forbidden. Never build SQL with format!, concatenation or
       push_str. Dynamic SQL (optional filters, sort order) only via sqlx::QueryBuilder: user values exclusively through
       push_bind; identifiers (column names, sort direction) only from a closed Rust enum mapped to string literals.
-      Schema migrations live in migrations/ and are applied with sqlx::migrate!.
+      Schema migrations live in migrations/ and are applied with sqlx::migrate!. The offline query metadata
+      (.sqlx/, `cargo sqlx prepare --workspace`) is committed and current: the gate builds with SQLX_OFFLINE=true, so a
+      changed query without refreshed metadata fails; CI with a database additionally runs
+      `cargo sqlx prepare --workspace --check` against the migrated schema.
     rationale: Parameterized, schema-checked queries prevent SQL injection and schema drift.
     checks:
       - { tool: clippy, check: "clippy::disallowed_methods (sqlx::query*, *_with, raw_sql, Executor::execute/fetch*)" }
+      - { tool: gate-script, check: "SQLX_OFFLINE=true cargo check (toolchain.gate_commands.static_analysis)" }
       - { tool: test, check: "dynamic_query_identifiers_from_enum_only" }
     linter_check: "clippy::disallowed_methods"
     example_bad: |
@@ -246,6 +253,25 @@ rules:
     checks:
       - { tool: test, check: "sqlite_pragmas_applied (PRAGMA foreign_keys = 1 on a pooled connection)" }
     linter_check: "test:sqlite_pragmas_applied"
+
+  - id: RULE-RWE-015
+    title: Safe, Forward-Only Migrations
+    category: reliability
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Migrations are forward-only, append-only SQL files in migrations/ (never edit or delete an applied migration;
+      sqlx verifies checksums). Schema changes are backward compatible with the previously deployed release
+      (expand/contract): add nullable or defaulted columns, backfill in batches, switch the code, and remove old
+      columns only in a later release. Destructive statements — DROP TABLE/COLUMN/INDEX/VIEW, ALTER TABLE … DROP or
+      RENAME, TRUNCATE, DELETE or UPDATE without WHERE — need the comment
+      `-- AEGIS-DEVIATION(RULE-RWE-015): <justification incl. the release that stopped using it>` directly above the
+      statement. Data subject to retention rules (RULE-RWE-072) is never deleted by a migration.
+    rationale: A destructive migration cannot be rolled back and breaks the old release during a rolling deployment.
+    checks:
+      - { tool: gate-script, check: "aegis migrations check (toolchain.gate_commands.lint)" }
+    linter_check: "aegis:migrations"
 
   # ---------------------------------------------------------------- Authorization / tenants
   - id: RULE-RWE-020

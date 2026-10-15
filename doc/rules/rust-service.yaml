@@ -191,3 +191,38 @@ rules:
       component and version information so that clients can show an honest state ("waiting for model",
       "indexing 1,203 of 40,000").
     rationale: Operators and clients must distinguish "down" from "busy" from "degraded".
+
+  - id: RULE-RSV-013
+    title: Deterministic Simulation Tests for Concurrency, Sync and Network Faults
+    category: testing
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      Code whose correctness depends on interleavings or on the network gets deterministic simulation tests in
+      addition to unit tests: custom synchronisation primitives, lock-free structures and shared-state protocols are
+      model-checked with loom (cfg(loom) builds, every interleaving explored); client/server synchronisation, offline
+      queues, retries and replication are tested with turmoil (simulated network and clock: partitions, packet loss,
+      reordering, restarts of either side). Every simulation uses a fixed seed or exhaustive exploration, asserts the
+      invariants (no lost or duplicated writes, convergence after healing, bounded queues), and runs in the normal test
+      stage. Real sleeps, real sockets and wall-clock time are not allowed in these tests.
+    rationale: Race conditions and partition bugs are invisible to example-based tests and to reviewers; simulation makes them reproducible.
+    checks:
+      - { tool: rustc, check: "loom / turmoil tests in the test suite (named *_sim / cfg(loom))" }
+    example_good: |
+      #[test]
+      fn sync_converges_after_partition() {
+          let mut sim = turmoil::Builder::new().rng_seed(7).build();
+          sim.host("server", || server::run(test_config()));
+          sim.client("client", async {
+              let c = Client::connect("server:7000").await?;
+              c.queue_offline(write("a")).await;
+              turmoil::partition("client", "server");
+              c.queue_offline(write("b")).await;
+              turmoil::repair("client", "server");
+              c.flush().await?;
+              assert_eq!(c.server_state().await?, vec!["a", "b"]);   // no loss, no duplicate, order kept
+              Ok(())
+          });
+          sim.run().unwrap();
+      }

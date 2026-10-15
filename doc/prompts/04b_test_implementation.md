@@ -43,7 +43,7 @@ OUTPUT:
 
 ## Review & Freeze
 
-1. Run the tests against the stubs and confirm every test fails for the documented reason (a test that passes against a stub verifies nothing).
+1. Run the tests against the stubs and confirm every test fails for the documented reason (a test that passes against a stub verifies nothing). `aegis tests freeze` enforces this deterministically for Rust: it refuses unless `cargo test --no-run` compiles and every *newly* frozen test function runs and fails (ignored or passing tests are rejected). Brownfield characterization tests that document existing behaviour use `--characterization` (they must run, may pass); projects without a built-in runner use `--unchecked` after checking by hand — the mode is recorded in `tests.lock`.
 2. Blind review of the tests (stage `testplan`): `aegis review create --stage testplan --artifact tests/... --reviewer <model> --author <test agent>`. Focus: does each test falsify its requirement, are edge cases from the plan present, are assertions strong enough?
 3. Disposition all findings, then freeze: `aegis tests freeze` (writes `doc/testplan/tests.lock`, commit it).
 4. From now on the `test_freeze` gate stage rejects any modification. Changing a frozen test requires a test review and a human re-freeze — never the implementation model.

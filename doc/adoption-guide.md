@@ -117,7 +117,7 @@ Save the output in `doc/requirements/REQ-001.md`, `REQ-002.md`, etc.
 ### Phase 3: Traceability X-Ray
 
 1. Tag entry point functions/structs with `@implements REQ-XXX`.
-2. Tag existing unit/integration tests with `@verifies TEST-XXX`.
+2. Tag existing unit/integration tests with `@verifies TEST-XXX` and freeze them with `aegis tests freeze --characterization` (they document existing behaviour and may pass; new tests for changes must fail first).
 3. Run `aegis trace`:
 
 ```bash

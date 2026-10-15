@@ -37,6 +37,13 @@ pub struct AgentLoopConfig {
     /// Gate stages the model runs inside its loop (`aegis gate --only ...`)
     #[serde(default = "default_fast_stages")]
     pub fast_stages: Vec<String>,
+    /// Attempts a stronger model gets with an `aegis escalate` bundle before a human decides
+    #[serde(default = "default_escalation_attempts")]
+    pub escalation_attempts: u32,
+}
+
+fn default_escalation_attempts() -> u32 {
+    2
 }
 
 fn default_max_iterations() -> u32 {
@@ -52,6 +59,7 @@ impl Default for AgentLoopConfig {
         Self {
             max_iterations: default_max_iterations(),
             fast_stages: default_fast_stages(),
+            escalation_attempts: default_escalation_attempts(),
         }
     }
 }

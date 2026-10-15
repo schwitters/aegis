@@ -46,7 +46,7 @@ gate:
     active: true                 # tests are implemented + reviewed first, then frozen (aegis tests freeze)
   tests:
     active: true
-    levels: [unit, integration, contract, ui_snapshot]
+    levels: [unit, integration, contract, ui_snapshot, simulation]   # simulation: loom / turmoil (RULE-RSV-013)
   coverage:
     active: true
     metric: line                 # cargo-llvm-cov on stable; switch to `branch` with a nightly coverage job
@@ -88,6 +88,7 @@ deliverables:
 
 # --- 4. Coding Constraints (Strict Directives for the Implementation Model) --
 coding_constraints:
+  - "Sync, offline queues, retries and shared-state concurrency are covered by deterministic simulation tests (turmoil / loom, fixed seeds, RULE-RSV-013)."
   - No network traffic except between the product's own clients and servers, plus explicitly user-triggered model downloads from pinned URLs verified by SHA-256.
   - No telemetry, analytics, crash upload or remote logging of any kind.
   - Every persistent state change is transactional; killing any process at any time must leave resumable state.

@@ -103,6 +103,20 @@ enum Commands {
         #[arg(long)]
         draft: bool,
     },
+    /// Migration safety: destructive SQL only with an AEGIS-DEVIATION marker
+    Migrations {
+        #[command(subcommand)]
+        cmd: MigrationsCommands,
+    },
+    /// Bundle a deterministic escalation context for a stronger model (target/aegis/escalations/)
+    Escalate {
+        /// Task ID (TASK-REQ-… or REQ-…)
+        task: String,
+        #[arg(long, default_value = "doc/profile.yaml")]
+        profile: String,
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
     /// Delivered documentation (docs/: one MkDocs site per handbook)
     Docs {
         #[command(subcommand)]
@@ -150,8 +164,15 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum TestsCommands {
-    /// Hash every file with @verifies annotations into doc/testplan/tests.lock
+    /// Hash every file with @verifies annotations into doc/testplan/tests.lock — only after the new tests were shown
+    /// to compile and fail against the current code (Rust: cargo test)
     Freeze {
+        /// New tests may pass: they characterize existing behaviour (brownfield)
+        #[arg(long)]
+        characterization: bool,
+        /// Skip the execution check (non-Rust projects); recorded in the lock
+        #[arg(long)]
+        unchecked: bool,
         #[arg(long, default_value = ".")]
         root: String,
         #[arg(long, default_value = "doc")]
@@ -190,6 +211,19 @@ enum SpecCommands {
     },
     /// List all sections with their anchors (what `source:` may cite)
     Sections {
+        #[arg(long, default_value = ".")]
+        root: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrationsCommands {
+    /// Check every *.sql below --dir for destructive statements without a deviation marker
+    Check {
+        #[arg(long, default_value = "migrations")]
+        dir: String,
+        #[arg(long, default_value = aegis::migrations::DEFAULT_RULE)]
+        rule: String,
         #[arg(long, default_value = ".")]
         root: String,
     },
@@ -521,10 +555,15 @@ fn main() -> Result<()> {
             }
         }
         Commands::Tests { cmd } => match cmd {
-            TestsCommands::Freeze { root, doc, src, profile } => {
+            TestsCommands::Freeze { characterization, unchecked, root, doc, src, profile } => {
                 let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
                 let src_paths = source_roots(&root_path, &src, profile.as_deref())?;
-                let (path, n) = testfreeze::freeze(&root_path, &root_path.join(doc), &src_paths)?;
+                let mode = match (characterization, unchecked) {
+                    (_, true) => testfreeze::FreezeMode::Unchecked,
+                    (true, false) => testfreeze::FreezeMode::Characterization,
+                    (false, false) => testfreeze::FreezeMode::FailFirst,
+                };
+                let (path, n) = testfreeze::freeze_checked(&root_path, &root_path.join(doc), &src_paths, mode)?;
                 println!(
                     "✔ Froze {} test file(s): {}",
                     n,
@@ -591,6 +630,26 @@ fn main() -> Result<()> {
             if !report.problems.is_empty() {
                 exit(1);
             }
+        }
+        Commands::Migrations { cmd } => match cmd {
+            MigrationsCommands::Check { dir, rule, root } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let (n, findings) = aegis::migrations::check_dir(&root_path, &root_path.join(&dir), &rule)?;
+                if findings.is_empty() {
+                    println!("✔ {} migration file(s) checked, no unmarked destructive statements", n);
+                } else {
+                    for f in &findings {
+                        println!("{}", f);
+                    }
+                    exit(1);
+                }
+            }
+        },
+        Commands::Escalate { task, profile, root } => {
+            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let prof = Profile::load_from_file(root_path.join(&profile))?;
+            let path = aegis::escalate::bundle(&root_path, &prof, &profile, &task, None)?;
+            println!("✔ Escalation context: {}", path.strip_prefix(&root_path).unwrap_or(&path).display());
         }
         Commands::Docs { cmd } => match cmd {
             DocsCommands::CspHashes { site } => {

@@ -115,14 +115,16 @@ architecture, usecases or testplan now makes the gate red (UNREVIEWED/SUSPECT). 
 4.3 cargo test: every test must fail against the stubs for the reason its TEST-xxx describes. Fix tests that pass.
 4.4 aegis trace: no "specified in test plan but not implemented" GAPs left.
 4.5 Review skeleton: aegis review create --stage testplan --artifact <test files> --reviewer TBD --author <you>.
-4.6 STOP. Continue only after "tests frozen" (the human runs aegis tests freeze after the test review).
+4.6 STOP. Continue only after "tests frozen" (the human runs aegis tests freeze after the test review; it refuses
+    unless the tests compile and every new test fails against the stubs).
 
 5. WORK PACKETS (generated, not written)
 5.1 aegis tests verify          -> all test files frozen and unchanged
 5.2 aegis instructions --profile doc/profile.yaml --out AGENT_INSTRUCTIONS.md
 5.3 aegis tasks --profile doc/profile.yaml
     It refuses without a current baseline or frozen tests, orders packets by layer, embeds requirement, use cases,
-    architecture, frozen test functions, rules, gate command and escalation format. If it reports OVERSIZE or UNPLACED,
+    architecture, the source of the frozen test functions, the stubs to fill in (todo!() / // STUB) with the type
+    definitions they use, rules, gate command and escalation format. If it reports OVERSIZE or UNPLACED,
     do not edit the packets: open an issue proposing the split or the missing `crate:` (spec change -> review ->
     re-baseline -> regenerate).
 5.4 aegis gate --profile doc/profile.yaml --only build,architecture,test_freeze -> green.

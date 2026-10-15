@@ -57,6 +57,14 @@ pub const STAGES: [(&str, &str); 14] = [
 /// Stages implemented by Aegis itself; a `command` override would bypass their checks.
 const INTERNAL_STAGES: [&str; 6] = ["architecture", "test_freeze", "traceability", "issues", "deliverables", "reviews"];
 
+/// `aegis …` in a ruleset command runs this very binary (it need not be on PATH, e.g. tools/aegis/target/release).
+pub fn self_invocation(cmd: &str) -> String {
+    match (cmd.strip_prefix("aegis "), std::env::current_exe()) {
+        (Some(rest), Ok(exe)) => format!("'{}' {}", exe.display(), rest),
+        _ => cmd.to_string(),
+    }
+}
+
 /// Splits a command line into words, honouring single and double quotes (enough to find the program name).
 fn shell_words(cmd: &str) -> Vec<String> {
     let mut words = Vec::new();
@@ -315,6 +323,7 @@ impl GateRunner {
         }
         for rf in &self.rulesets {
             for cmd in rf.gate_commands(key) {
+                let cmd = self_invocation(&cmd);
                 let tool = command_tool(&cmd);
                 if let Some(t) = tool.as_deref() {
                     if !command_exists(t) {

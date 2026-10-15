@@ -112,6 +112,8 @@ spec-ambiguity | spec-contradiction | test-defect | missing-interface | toolchai
 <Spec change / test change / hint the model would need. Never applied by the model itself.>
 ```
 
+**Automatic second level:** the harness runs `aegis escalate <TASK-ID>`, which writes a deterministic bundle to `target/aegis/escalations/<TASK-ID>.md` — task packet, this escalation report, the current fast-gate output and the working-tree diff — and hands it to a frontier model for at most `agent_loop.escalation_attempts` (default 2) attempts under the same constraints. Only if that fails, a human decides.
+
 **Resolution (outside the implementation model):** A Frontier model or the human answers the escalation. A spec or test change goes back through review → `aegis baseline --approve` → `aegis tests freeze`; a pure hint goes back into the loop. Repeated escalations of the same category are a process signal (e.g. the requirements are under-specified) and belong in an issue.
 
 ---

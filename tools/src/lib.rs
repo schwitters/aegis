@@ -1,12 +1,15 @@
 pub mod architecture;
 pub mod baseline;
+pub mod codectx;
 pub mod deviation;
 pub mod docs;
+pub mod escalate;
 pub mod gate;
 pub mod impact;
 pub mod init;
 pub mod instructions;
 pub mod issue;
+pub mod migrations;
 pub mod profile;
 pub mod review;
 pub mod rulesets;
@@ -794,6 +797,123 @@ agent_loop:\n  max_iterations: 2\n  fast_stages: [build, tests]\n";
         let r = tasks::generate(&root, &prof, "doc/profile.yaml", 50, false).unwrap();
         assert!(!root.join("doc/tasks/TASK-REQ-999.md").exists());
         assert!(r.problems.iter().any(|p| p.starts_with("OVERSIZE TASK-REQ-001")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_codectx_extracts_items() {
+        let src = "/// Doc\n#[test]\nfn t() {\n    let s = \"}{\";\n    assert_eq!(f('}'), 1); // }\n}\nfn next() {}\n";
+        let lines: Vec<&str> = src.lines().collect();
+        assert_eq!(codectx::item_end(&lines, 2), Some(5));
+        assert_eq!(codectx::item_end(&["pub struct Unit;"], 0), Some(0));
+        let root = temp_root("codectx");
+        write(&root, "crates/shop-domain/src/lib.rs",
+            "/// Credentials.\npub struct Credentials {\n    pub email: String,\n}\n\n/// Verify.\n// STUB\npub fn verify(c: &Credentials) -> Result<UserId, AuthError> {\n    todo!()\n}\n\npub fn done() -> u8 { 1 }\n\npub enum AuthError { Invalid }\npub struct UserId(u64);\n");
+        let stubs = codectx::stubs(&[root.join("crates/shop-domain")], &root);
+        assert_eq!(stubs.len(), 1, "{:?}", stubs);
+        assert!(stubs[0].1.starts_with("/// Verify.") && stubs[0].1.contains("todo!()"));
+        let types = codectx::referenced_types(&[stubs[0].1.clone()], &[root.join("crates")], &root);
+        assert_eq!(types.keys().cloned().collect::<Vec<_>>(), vec!["AuthError", "Credentials", "UserId"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_tasks_embed_test_sources_stubs_and_types() {
+        let root = temp_root("tasks_ctx");
+        task_project(&root);
+        write(&root, "crates/shop-domain/src/lib.rs",
+            "/// Login check.\n// STUB\npub fn check(c: &Login) -> bool {\n    todo!()\n}\n\n/// Login input.\npub struct Login {\n    pub user: String,\n}\n");
+        let mut prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+        prof.gate.insert("traceability".into(), profile::GateStageConfig { paths: vec!["src".into(), "tests".into(), "crates".into()], ..Default::default() });
+        let r = tasks::generate(&root, &prof, "doc/profile.yaml", 6000, true).unwrap();
+        assert!(r.tasks > 0);
+        let t1 = std::fs::read_to_string(root.join("doc/tasks/TASK-REQ-001.md")).unwrap();
+        assert!(t1.contains("```rust\n// tests/auth_test.rs:1\n/// @verifies TEST-001\n#[test] fn a() {}"), "{}", t1);
+        assert!(t1.contains("### Stubs to Implement") && t1.contains("pub fn check(c: &Login) -> bool"));
+        assert!(t1.contains("### Types Used by the Tests and Stubs") && t1.contains("pub struct Login"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_parse_libtest_and_test_fns() {
+        let out = "running 3 tests\ntest it::login::ok_case ... ok\ntest it::login::bad_case ... FAILED\ntest slow ... ignored\n";
+        let r = testfreeze::parse_libtest(out);
+        assert_eq!(r.get("it::login::ok_case").map(|s| s.as_str()), Some("ok"));
+        assert_eq!(r.get("it::login::bad_case").map(|s| s.as_str()), Some("FAILED"));
+        assert_eq!(r.get("slow").map(|s| s.as_str()), Some("ignored"));
+        assert_eq!(testfreeze::test_fns_in("/// @verifies TEST-1\n#[test]\nfn a() {}\n// @verifies TEST-2\n#[tokio::test]\nasync fn b() {}\n"), vec!["a", "b"]);
+    }
+
+    fn cargo_project(root: &std::path::Path, test_body: &str) {
+        write(root, "Cargo.toml", "[package]\nname = \"freezeprobe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n");
+        write(root, "src/lib.rs", "/// @implements REQ-001\npub fn add(a: i32, b: i32) -> i32 {\n    let _ = (a, b);\n    todo!()\n}\n");
+        write(root, "tests/it.rs", test_body);
+    }
+
+    #[test]
+    fn test_freeze_requires_compiling_failing_tests() {
+        let root = temp_root("freeze_cargo");
+        let doc = root.join("doc");
+        let srcs = vec![root.join("src"), root.join("tests")];
+        // does not compile (wrong signature)
+        cargo_project(&root, "/// @verifies TEST-001\n#[test]\nfn adds() { assert_eq!(freezeprobe::add(1), 2); }\n");
+        let e = testfreeze::freeze_checked(&root, &doc, &srcs, testfreeze::FreezeMode::FailFirst).unwrap_err();
+        assert!(format!("{:#}", e).contains("do not compile"), "{:#}", e);
+        // compiles and fails against the stub -> frozen
+        cargo_project(&root, "/// @verifies TEST-001\n#[test]\nfn adds() { assert_eq!(freezeprobe::add(1, 1), 2); }\n");
+        testfreeze::freeze_checked(&root, &doc, &srcs, testfreeze::FreezeMode::FailFirst).unwrap();
+        assert!(testfreeze::locked_tests(&doc).unwrap().contains(&("tests/it.rs".to_string(), "adds".to_string())));
+        // a new test that already passes is rejected; characterization accepts it
+        write(&root, "tests/it.rs", "/// @verifies TEST-001\n#[test]\nfn adds() { assert_eq!(freezeprobe::add(1, 1), 2); }\n/// @verifies TEST-001\n#[test]\nfn trivially_true() { assert!(true); }\n");
+        let e = testfreeze::freeze_checked(&root, &doc, &srcs, testfreeze::FreezeMode::FailFirst).unwrap_err();
+        assert!(format!("{:#}", e).contains("trivially_true (tests/it.rs): passes"), "{:#}", e);
+        assert!(!format!("{:#}", e).contains("adds ("), "previously frozen tests are not re-checked");
+        testfreeze::freeze_checked(&root, &doc, &srcs, testfreeze::FreezeMode::Characterization).unwrap();
+        // ignored tests never freeze
+        write(&root, "tests/it.rs", "/// @verifies TEST-001\n#[test]\n#[ignore]\nfn later() { assert_eq!(freezeprobe::add(2, 2), 4); }\n");
+        let e = testfreeze::freeze_checked(&root, &doc, &srcs, testfreeze::FreezeMode::Characterization).unwrap_err();
+        assert!(format!("{:#}", e).contains("#[ignore]d"), "{:#}", e);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_migration_safety_check() {
+        let sql = "CREATE TABLE a (id INTEGER);\n\nDROP TABLE old_a;\n\n-- AEGIS-DEVIATION(RULE-RWE-015): unused since 1.4\nALTER TABLE a\n  DROP COLUMN legacy;\n\nDELETE FROM a WHERE id = 1;\nDELETE FROM a; -- oops\nUPDATE a SET id = 2;\n-- AEGIS-DEVIATION(RULE-RWE-015):\nTRUNCATE a;\nALTER TABLE a RENAME TO b;\n";
+        let f = migrations::check_text(sql, "migrations/0002.sql", "RULE-RWE-015");
+        let has = |needle: &str| f.iter().any(|x| x.contains(needle));
+        assert!(has("0002.sql:3: drops a schema object"), "{:#?}", f);
+        assert!(!has(":6:"), "marked deviation passes");
+        assert!(!has(":9:"), "DELETE with WHERE is fine");
+        assert!(has(":10: deletes all rows"));
+        assert!(has(":11: updates all rows"));
+        assert!(has(":13: truncates"), "marker without justification does not count");
+        assert!(has(":14: renames"));
+        assert_eq!(f.len(), 5, "{:#?}", f);
+    }
+
+    #[test]
+    fn test_escalation_bundle() {
+        let root = temp_root("escalate");
+        task_project(&root);
+        let git = |args: &[&str]| { std::process::Command::new("git").args(args).current_dir(&root).output().unwrap(); };
+        git(&["init", "-q"]);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "add", "."]);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]);
+        let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+        tasks::generate(&root, &prof, "doc/profile.yaml", 6000, true).unwrap();
+        write(&root, "src/api.rs", "/// @implements REQ-002\nfn login() { let x: u8 = 300; }\n");
+        write(&root, "src/new_helper.rs", "pub fn helper() {}\n");
+        write(&root, "ESCALATION-REQ-002.md", "# Escalation: REQ-002\nOverflow I cannot fix.\n");
+        let path = escalate::bundle(&root, &prof, "doc/profile.yaml", "REQ-002", Some("error[E0080]: literal out of range".into())).unwrap();
+        let b = std::fs::read_to_string(path).unwrap();
+        assert!(b.contains("at most **2 attempts**"));
+        assert!(b.contains("# TASK-REQ-002: Login endpoint"), "task packet embedded");
+        assert!(b.contains("Overflow I cannot fix."));
+        assert!(b.contains("error[E0080]"));
+        assert!(b.contains("+fn login() { let x: u8 = 300; }"), "{}", b);
+        assert!(b.contains("src/new_helper.rs (new file)"));
+        assert!(!b.contains("doc/tasks/TASK"), "doc/ excluded from the diff");
+        assert!(escalate::bundle(&root, &prof, "doc/profile.yaml", "REQ-404", Some(String::new())).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -211,6 +211,54 @@ fn scaffold_docs(root: &Path, slug: &str) -> Result<()> {
     Ok(())
 }
 
+/// Personal-data wrapper for the domain crate (RULE-RWE-070).
+const PII_RS: &str = r#"//! Personal data wrapper (RULE-RWE-070): `Debug` and `Display` never print the value.
+
+use std::fmt;
+
+/// A personal value (name, e-mail, phone, address, IP address). Read it only via [`Pii::expose`] at the point of
+/// use (view model, e-mail delivery) — never in logs, traces or error messages.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Pii<T>(T);
+
+impl<T> Pii<T> {
+    /// Wraps a personal value.
+    pub const fn new(value: T) -> Self {
+        Self(value)
+    }
+
+    /// The wrapped value. Do not log, trace or format the result.
+    pub const fn expose(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> fmt::Debug for Pii<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[PII]")
+    }
+}
+
+impl<T> fmt::Display for Pii<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[PII]")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pii;
+
+    #[test]
+    fn debug_and_display_are_redacted() {
+        let email = Pii::new("jane@example.org".to_string());
+        assert_eq!(format!("{email:?}"), "[PII]");
+        assert_eq!(format!("{email}"), "[PII]");
+        assert_eq!(email.expose(), "jane@example.org");
+    }
+}
+"#;
+
 /// Scaffolds the layered Cargo workspace (only when the root has no Cargo.toml yet).
 fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
     let crate_name = |layer: &str| format!("{slug}-{layer}");
@@ -237,6 +285,9 @@ fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
         let header = format!("//! {description}\n\n#![forbid(unsafe_code)]\n");
         if layer == "server" {
             fs::write(dir.join("src/main.rs"), format!("{header}\nfn main() {{}}\n"))?;
+        } else if layer == "domain" {
+            fs::write(dir.join("src/lib.rs"), format!("{header}\npub mod pii;\n"))?;
+            fs::write(dir.join("src/pii.rs"), PII_RS)?;
         } else {
             fs::write(dir.join("src/lib.rs"), header)?;
         }

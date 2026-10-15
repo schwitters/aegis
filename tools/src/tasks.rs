@@ -217,6 +217,7 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
 
     let tests_section = |test_ids: &[String]| -> String {
         let mut out = String::from("## Frozen Tests to Make Pass (read-only)\n\n");
+        let mut sources = String::new();
         if test_ids.is_empty() {
             out.push_str("_None — escalate: a task without tests cannot be verified._\n\n");
         }
@@ -229,8 +230,43 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
                 title,
                 if fns.is_empty() { "NOT IMPLEMENTED (escalate)".to_string() } else { fns.join(", ") }
             ));
+            for loc in trace.test_annot.get(t).into_iter().flatten() {
+                if let Some(src) = crate::codectx::test_source(loc) {
+                    let shown = Path::new(loc).strip_prefix(root).unwrap_or(Path::new(loc)).display().to_string();
+                    sources.push_str(&format!("```rust\n// {}\n{}\n```\n\n", shown, src));
+                }
+            }
         }
         out.push('\n');
+        out.push_str(&sources);
+        out
+    };
+
+    // Code context: stubs to fill in (task crates) and the type definitions tests and stubs mention (all crates).
+    let code_section = |crate_dirs: &[PathBuf], test_ids: &[String]| -> String {
+        let stubs = crate::codectx::stubs(crate_dirs, root);
+        let mut texts: Vec<String> = stubs.iter().map(|(_, s)| s.clone()).collect();
+        for t in test_ids {
+            for loc in trace.test_annot.get(t).into_iter().flatten() {
+                texts.extend(crate::codectx::test_source(loc));
+            }
+        }
+        let types = crate::codectx::referenced_types(&texts, &src_dirs, root);
+        let mut out = String::from("## Code Context (generated, read before editing)\n\n");
+        if stubs.is_empty() {
+            out.push_str("_No stubs (`todo!()` / `// STUB`) in the task's crates._\n\n");
+        } else {
+            out.push_str("### Stubs to Implement\n\nReplace the bodies; keep signatures unless a frozen test requires otherwise.\n\n");
+            for (loc, item) in &stubs {
+                out.push_str(&format!("```rust\n// {}\n{}\n```\n\n", loc, item));
+            }
+        }
+        if !types.is_empty() {
+            out.push_str("### Types Used by the Tests and Stubs\n\n");
+            for (loc, item) in types.values() {
+                out.push_str(&format!("```rust\n// {}\n{}\n```\n\n", loc, item));
+            }
+        }
         out
     };
 
@@ -307,6 +343,12 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
             ));
         }
         b.push_str(&tests_section(&tests));
+        let crate_dirs: Vec<PathBuf> = archs
+            .iter()
+            .filter_map(|a| arch_info.get(a).and_then(|(c, _)| c.clone()))
+            .map(|c| root.join("crates").join(c))
+            .collect();
+        b.push_str(&code_section(&crate_dirs, &tests));
         b.push_str(&rules_section(&texts));
         b.push_str(&footer(&id, req, &crates));
         packets.push(Packet { id, sort: (rank, 0, req.clone()), body: b });
@@ -335,6 +377,8 @@ pub fn generate(root: &Path, profile: &Profile, profile_rel: &str, max_tokens: u
             krate.clone().unwrap_or_else(|| "?".into()),
         );
         b.push_str(&tests_section(tests));
+        let crate_dirs: Vec<PathBuf> = krate.iter().map(|c| root.join("crates").join(c)).collect();
+        b.push_str(&code_section(&crate_dirs, tests));
         b.push_str(&rules_section(std::slice::from_ref(&body)));
         let scope: Vec<String> = krate.iter().map(|c| format!("`crates/{}/`", c)).collect();
         b.push_str(&footer(&id, a, &scope));
