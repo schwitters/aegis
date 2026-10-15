@@ -16,7 +16,7 @@
 #   docs/{user,operator,technical,hosting}/  four MkDocs sites (RULE-RWE-100), docs/build.sh (HTML + PDF),
 #   docs/collect-legal.sh + about.toml (SBOM and third-party licenses for /admin-help, RULE-RWE-104)
 #   clippy.toml  <- templates/rust-web/clippy.toml     (one per workspace, superset of the rust template)
-#   deny.toml    <- templates/rust/deny.toml           (bans openssl/native-tls, license policy)
+#   deny.toml    <- templates/rust-web/deny.toml       (rustls only, tokio + axum only, license policy, no git deps)
 #   Cargo.toml   <- templates/rust/workspace-lints.toml ([workspace.lints]: unwrap_used, disallowed_methods, ...)
 
 profile: web-enterprise

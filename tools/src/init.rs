@@ -123,7 +123,7 @@ cargo about generate --fail --manifest-path crates/<slug>-server/Cargo.toml -c a
 
 const ABOUT_TOML: &str = "# cargo-about (RULE-RWE-104): accepted licenses — keep in sync with deny.toml [licenses].allow\n\
 accepted = [\n  \"MIT\", \"Apache-2.0\", \"Apache-2.0 WITH LLVM-exception\", \"BSD-2-Clause\", \"BSD-3-Clause\", \"ISC\", \"Zlib\",\n\
-  \"Unicode-3.0\", \"Unicode-DFS-2016\", \"CC0-1.0\", \"BSL-1.0\", \"MPL-2.0\",\n]\n";
+  \"Unicode-3.0\", \"Unicode-DFS-2016\", \"CC0-1.0\", \"BSL-1.0\", \"MPL-2.0\", \"CDLA-Permissive-2.0\",\n]\n";
 
 const ABOUT_HBS: &str = r#"---
 title: Third-Party Licenses
@@ -340,7 +340,7 @@ const RULESET_RUST_WEB_HTMX: &str = include_str!("../../doc/rules/rust-web-htmx.
 const RULESET_RUST_WEB_PWA: &str = include_str!("../../doc/rules/rust-web-pwa.yaml");
 const PROFILE_WEB: &str = include_str!("../../doc/web-enterprise.yaml");
 const TEMPLATE_WEB_CLIPPY: &str = include_str!("../../templates/rust-web/clippy.toml");
-const TEMPLATE_RUST_DENY: &str = include_str!("../../templates/rust/deny.toml");
+const TEMPLATE_WEB_DENY: &str = include_str!("../../templates/rust-web/deny.toml");
 const TEMPLATE_RUST_LINTS: &str = include_str!("../../templates/rust/workspace-lints.toml");
 
 fn write_if_missing(path: &Path, content: &str) -> Result<()> {
@@ -388,7 +388,7 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
         write_if_missing(&rules_dir.join("rust-web-pwa.yaml"), RULESET_RUST_WEB_PWA)?;
         write_if_missing(&doc_dir.join("profile.yaml"), PROFILE_WEB)?;
         write_if_missing(&root.join("clippy.toml"), TEMPLATE_WEB_CLIPPY)?;
-        write_if_missing(&root.join("deny.toml"), TEMPLATE_RUST_DENY)?;
+        write_if_missing(&root.join("deny.toml"), TEMPLATE_WEB_DENY)?;
         write_if_missing(&rules_dir.join("workspace-lints.toml"), TEMPLATE_RUST_LINTS)?;
         fs::create_dir_all(doc_dir.join("privacy")).context("Failed to create doc/privacy")?;
         let slug = project_slug(opts.name.as_deref(), root);

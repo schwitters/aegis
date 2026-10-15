@@ -1,0 +1,42 @@
+# Aegis web-enterprise: dependency policy for cargo-deny (RULE-RS-014, RULE-RSV-002, RULE-RWE-074, RULE-RWE-081).
+# Superset of templates/rust/deny.toml. Keep [licenses].allow in sync with about.toml (cargo-about, RULE-RWE-104).
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "workspace"       # unmaintained crates the workspace depends on directly fail the gate
+ignore = []                      # every entry needs an issue ID and an expiry date in a comment
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+  "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "BSL-1.0", "MPL-2.0",
+  "CDLA-Permissive-2.0",         # webpki-roots (Mozilla CA bundle for rustls)
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"               # no `serde = "*"` from coding agents
+allow-wildcard-paths = true      # path dependencies between workspace crates
+highlight = "all"
+deny = [
+  # TLS only via rustls (RULE-RSV-002): no C TLS stacks, also not through default features (reqwest, sqlx)
+  { crate = "openssl", reason = "TLS via rustls only (RULE-RSV-002)" },
+  { crate = "openssl-sys", reason = "TLS via rustls only (RULE-RSV-002)" },
+  { crate = "native-tls", reason = "TLS via rustls only (RULE-RSV-002)" },
+  # One async runtime and one web framework (layer policy, RULE-RWE-090)
+  { crate = "async-std", reason = "the workspace standardizes on tokio" },
+  { crate = "smol", reason = "the workspace standardizes on tokio" },
+  { crate = "actix-web", reason = "the workspace standardizes on axum" },
+  { crate = "rocket", reason = "the workspace standardizes on axum" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"             # no arbitrary git dependencies from coding agents
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
