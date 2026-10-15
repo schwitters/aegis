@@ -1,6 +1,6 @@
-# Prompt 06: Implementation Loop for the Local 27B Implementation Model
+# Prompt 06: Implementation Loop for the ≥27B Coding Model
 
-**Target Model:** Local implementation model (e.g. a 27B–32B coder model)  
+**Target Model:** Local implementation model (e.g. a ≥27B coding model)  
 **Execution Context:** Autonomous coding agent inside a harness with shell access (Claude Code, Aider, OpenHands, …) — **not** a copy-paste chat. The model must be able to run `aegis gate` itself and read the output.  
 **Preconditions:** Specification baseline approved (`doc/baseline.lock`), tests implemented, reviewed and frozen (`doc/testplan/tests.lock`), `AGENT_INSTRUCTIONS.md` synthesized (`aegis instructions`).
 

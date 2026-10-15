@@ -26,7 +26,7 @@ Audit the specification across these 5 dimensions:
 2. **ISO/IEC 25010 Completeness:** Were any critical quality axes (especially Performance, Security, Reliability, Safety) neglected or glossed over?
 3. **Falsifiability & Testability:** Can every single functional capability be verified by an automated test? Which statements are untestable?
 4. **Feasibility & Architectural Traps:** Are there unrealistic concurrency assumptions, hidden memory allocations, or dependency risks?
-5. **Scope Boundaries:** Are the Non-Goals sufficient to prevent context drift during 27B implementation?
+5. **Scope Boundaries:** Are the Non-Goals sufficient to prevent context drift during implementation by the ≥27B coding model?
 
 OUTPUT FORMAT:
 Generate your review structured as follows:

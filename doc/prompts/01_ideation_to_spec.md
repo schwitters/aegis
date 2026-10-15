@@ -1,6 +1,6 @@
 # Prompt 01: Ideation to Initial Specification
 
-**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5)  
+**Target Model:** Frontier Model A (current frontier model)  
 **Output Artifact:** `doc/001_initial_spec.md`
 
 ---

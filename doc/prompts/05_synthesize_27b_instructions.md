@@ -1,7 +1,7 @@
-# Prompt 05: Synthesizing Agent Instructions for 27B Implementation Model
+# Prompt 05: Synthesizing Agent Instructions for ≥27B Coding Model
 
-**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5) or synthesized via `aegis instructions` (preferred: it renders the loop protocol from the profile's `agent_loop`)  
-**Output Artifact:** `AGENT_INSTRUCTIONS.md` (or prompt payload given to the 27B model)  
+**Target Model:** Frontier Model A (current frontier model) or synthesized via `aegis instructions` (preferred: it renders the loop protocol from the profile's `agent_loop`)  
+**Output Artifact:** `AGENT_INSTRUCTIONS.md` (or prompt payload given to the ≥27B coding model)  
 **Core Purpose:** Externalizing all implicit architectural knowledge, rules, and requirements into an unambiguous, bullet-proof prompt.
 
 ---
@@ -10,8 +10,8 @@
 
 ```text
 You are a Principal AI Agent Prompt Synthesizer.
-We are preparing the implementation phase. A local 27B coding model will implement the codebase.
-The 27B model possesses strong syntax knowledge but zero implicit context: what is not explicitly written in its instructions will be guessed or hallucinated.
+We are preparing the implementation phase. A ≥27B coding model will implement the codebase.
+The ≥27B coding model possesses strong syntax knowledge but zero implicit context: what is not explicitly written in its instructions will be guessed or hallucinated.
 
 INPUT CONTEXT:
 1. Domain Profile (`doc/profile.yaml` or `doc/embedded-safety.yaml` / `doc/enterprise.yaml`):
@@ -53,7 +53,7 @@ MANDATORY SECTIONS IN SYNTHESIZED INSTRUCTIONS:
    - After every change: `aegis gate --profile <PROFILE> --only build,lint,test_freeze,tests`.
    - At most `agent_loop.max_iterations` gate runs per task; then stop and write `ESCALATION-<REQ-ID>.md`
      (format in Prompt 06). Escalate immediately on ambiguity instead of guessing.
-7. **Definition of Done for the 27B Model:**
+7. **Definition of Done for the ≥27B Coding Model:**
    - Fast gate green for every task (builds without warnings, all frozen tests pass, tests unmodified).
    - Zero missing `@implements` annotations.
    - Every unfinished task has an escalation report.

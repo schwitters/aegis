@@ -89,7 +89,7 @@ deliverables:
   - readme
   - changelog
 
-# --- 4. Coding Constraints (Strict Directives for 27B Model) -----------------
+# --- 4. Coding Constraints (Strict Directives for ≥27B Coding Model) -----------------
 coding_constraints:
   - Structured JSON logging with correlation IDs; no raw stdout/println statements.
   - Zero hardcoded secrets in source code; load strictly from environment or secret vault.

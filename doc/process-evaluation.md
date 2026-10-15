@@ -29,7 +29,7 @@ flowchart TD
         TI --> Freeze["aegis tests freeze"]
     end
 
-    subgraph P2 ["2. Synthesis & Implementation Loop (27B Model)"]
+    subgraph P2 ["2. Synthesis & Implementation Loop (≥27B Coding Model)"]
         Prof["Domain Profile: doc/*.yaml"] --> Comp["aegis instructions"]
         Rules["Coding Ruleset: doc/rules/*.yaml"] --> Comp
         Freeze --> Comp
@@ -66,7 +66,7 @@ flowchart TD
 ## 2. Detailed Dimension Analysis
 
 ### A. Model Economics & Role Segregation: 4 / 5
-* **Concept:** Asymmetric division of labor. Large Frontier models handle conceptual reasoning (specification, test case design, architecture, review); a local 27B model executes deterministically.
+* **Concept:** Asymmetric division of labor. Large Frontier models handle conceptual reasoning (specification, test case design, architecture, review); a ≥27B coding model executes deterministically.
 * **Assessment:** Effectively resolves modern LLM challenges (context drift and hallucination). Frontier models must fully externalize implicit knowledge into `Agent Instructions`. What is omitted cannot be guessed.
 
 ### B. Anti-Hallucination & Verification Architecture: 4 / 5
@@ -76,7 +76,7 @@ flowchart TD
 
 ### C. Modularity & Tailoring (Profiles & Rulesets): 4 / 5
 * **Concept:** Decoupling of **Process Core**, **Domain Rigor** (`embedded-safety.yaml`, `enterprise.yaml`), and **Language Rules** (`doc/rules/*.yaml`).
-* **3-Tier Impact:** Rules act simultaneously in the prompt (27B model), in the review rubric (Frontier models), and in the linter/SAST checks (Gate).
+* **3-Tier Impact:** Rules act simultaneously in the prompt (≥27B coding model), in the review rubric (Frontier models), and in the linter/SAST checks (Gate).
 * **Assessment:** Declarative configuration prevents process fragmentation across safety-critical and enterprise domains.
 
 ### D. Maintenance & Change Management (`doc/change-runbook.md`): 5 / 5

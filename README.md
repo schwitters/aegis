@@ -96,7 +96,7 @@ The tests are frozen. Continue "Run 2" of tools/aegis/doc/prompts/00_spec_import
 ### Step 3 — Implementation (local model or frontier model in an agent harness)
 
 The packets are written for the weakest model you intend to use (budget: `agent_loop.max_task_tokens` in the profile).
-A local model (e.g. 27B–32B) works through them with the fast gate and escalates when stuck (`aegis escalate`); a
+A local ≥27B coding model works through them with the fast gate and escalates when stuck (`aegis escalate`); a
 frontier model can take the same queue with a larger budget and fewer escalations — the gates and frozen tests are
 identical either way.
 
@@ -124,7 +124,7 @@ remain the project's responsibility.
 
 Instead of relying on fragile single-agent prompts or passive chat reviews, Aegis structures a **multi-model pipeline** by roles:
 - **Frontier models** (the strongest models available to you) drive specification, architecture, test design, test implementation and blind reviews — preferably from different model families for independent reviews.
-- **Implementation models** — a local model (e.g. a 27B–32B coder model) or a frontier model — fill in the code task by task, constrained by generated work packets, rulesets and the fast gate.
+- **Implementation models** — a local model (e.g. a ≥27B coding model) or a frontier model — fill in the code task by task, constrained by generated work packets, rulesets and the fast gate.
 - **Test Agents** implement the test plan *before* the production code; the tests are reviewed and frozen, so the implementation model cannot weaken them.
 - **Aegis CLI** acts as the deterministic supervisor: verifying traceability (`REQ → ARCH → UC → TEST → Code`), detecting suspect links against an approved baseline, calculating blast radius for changes, recording reviews, managing issue lifecycles, and enforcing fail-closed CI execution gates.
 
@@ -145,7 +145,7 @@ flowchart TD
         TI --> Freeze["aegis tests freeze"]
     end
 
-    subgraph P2 ["2. Synthesis & Implementation Loop (27B Model)"]
+    subgraph P2 ["2. Synthesis & Implementation Loop (≥27B Coding Model)"]
         Prof["Domain Profile: doc/*.yaml"] --> Comp["aegis instructions"]
         Rules["Coding Ruleset: doc/rules/*.yaml"] --> Comp
         Freeze --> Comp

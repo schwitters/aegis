@@ -22,7 +22,7 @@ flowchart LR
 ### Step-by-Step Procedure
 
 ### 1. Ideation & Initial Specification
-Discuss the core architecture and scope with **Frontier Model A** (Claude 3.7 Sonnet / GPT-4.5). Store the result in `doc/001_initial_spec.md`.
+Discuss the core architecture and scope with **Frontier Model A** (current frontier model). Store the result in `doc/001_initial_spec.md`.
 
 ### 2. Scaffold Repository
 Run `aegis init` with your domain profile and systems language:
@@ -57,7 +57,7 @@ Before writing implementation code:
 
 ### 5. Implementation Loop, Gate & Review
 - Configure the agent harness so that the implementation model cannot write `doc/` or frozen test files (see [Prompt 06](prompts/06_27b_implementation.md)).
-- The local 27B model implements one requirement at a time (`@implements REQ-XXX`), running the fast gate after every change, and escalates after `agent_loop.max_iterations` attempts.
+- The ≥27B coding model implements one requirement at a time (`@implements REQ-XXX`), running the fast gate after every change, and escalates after `agent_loop.max_iterations` attempts.
 - Then:
 
 ```bash

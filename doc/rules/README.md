@@ -9,7 +9,7 @@ Every rule operates simultaneously across three sequential enforcement layers:
 
 | Tier | Mechanism | Executing Entity |
 |---|---|---|
-| **1. Agent Instructions** | Rules are formulated as **strict prompt directives** (with positive and negative examples) given to the 27B implementation model. | 27B Model |
+| **1. Agent Instructions** | Rules are formulated as **strict prompt directives** (with positive and negative examples) given to the ≥27B coding model. | ≥27B Coding Model |
 | **2. Review Rubric** | Rules serve as an **explicit audit checklist** (`RULE-XXX-YYY`) during blind parallel reviews. | Frontier Models |
 | **3. Machine Gate** | Where statically verifiable, rules map directly to **linter, SAST, or compiler checks** in the automated gate. | `clang-tidy`, `clippy`, `checkstyle`, `ruff` |
 
@@ -57,7 +57,7 @@ rules:
 - **`title`** — Concise rule description.
 - **`category`** — Classification: `memory`, `memory_safety`, `types`, `control_flow`, `error_handling`, `defensive_programming`, `concurrency`, `design`, `security`, `observability`, `resource_management`, `build`, `naming`, `style`, `documentation`, `testing`.
 - **`severity`** — `error` (strict gate failure) or `warning` (justification required for deviations).
-- **`instruction`** — Unambiguous directive for the 27B implementation model.
+- **`instruction`** — Unambiguous directive for the ≥27B coding model.
 - **`rationale`** — Technical rationale (guides Frontier models when evaluating trade-offs).
 - **`linter_check`** — (Optional) Exact compiler/linter check. If no 100% matching static check exists, the rule remains an explicit instruction and review check.
 

@@ -151,7 +151,7 @@ enum Commands {
         #[arg(long)]
         name: Option<String>,
     },
-    /// Synthesize AGENT_INSTRUCTIONS.md for the 27B implementation model
+    /// Synthesize AGENT_INSTRUCTIONS.md for the ≥27B coding model
     Instructions {
         #[arg(long)]
         profile: Option<String>,

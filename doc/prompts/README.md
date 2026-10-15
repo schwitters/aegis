@@ -13,7 +13,7 @@ A standardized collection of copy-pasteable prompt templates for orchestrating t
 | **4. Shift-Left Tests** | [`04_requirements_to_testplan.md`](04_requirements_to_testplan.md) | Frontier Model A | `doc/testplan/TEST-xxx.md`, then `aegis baseline --approve` |
 | **4b. Test Implementation** | [`04b_test_implementation.md`](04b_test_implementation.md) | Test agent (never the implementation model) | Tests with `@verifies`, reviewed, frozen in `doc/testplan/tests.lock` |
 | **5. Synthesis** | [`05_synthesize_27b_instructions.md`](05_synthesize_27b_instructions.md) | `aegis instructions` (or Frontier Model A) | `AGENT_INSTRUCTIONS.md` incl. loop protocol |
-| **6. Implementation Loop** | [`06_27b_implementation.md`](06_27b_implementation.md) | Local 27B Model in an agent harness | Production code with `@implements`; escalation reports |
+| **6. Implementation Loop** | [`06_27b_implementation.md`](06_27b_implementation.md) | ≥27B Coding Model in an agent harness | Production code with `@implements`; escalation reports |
 | — Full Gate | `aegis gate --skip reviews` | Deterministic | Green working tree |
 | **7. Final Review** | [`07_final_review.md`](07_final_review.md) | Frontier Model B | Review record of the green diff, then acceptance gate (`aegis gate`) |
 | **8. Handbooks** | [`08_documentation.md`](08_documentation.md) | Documentation agent (per handbook) | `docs/<handbook>/content/*.md` with `documents:`; review stage `documentation` |

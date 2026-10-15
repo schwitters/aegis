@@ -1,6 +1,6 @@
 # Prompt 03: Specification to Requirements & Use Cases
 
-**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5)  
+**Target Model:** Frontier Model A (current frontier model)  
 **Output Artifacts:** `doc/requirements/REQ-xxx.md`, `doc/architecture/ARCH-xxx.md`, `doc/usecases/UC-xxx.md`
 
 ---

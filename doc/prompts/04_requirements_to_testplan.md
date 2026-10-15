@@ -1,6 +1,6 @@
 # Prompt 04: Shift-Left Test Plan Derivation
 
-**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5)  
+**Target Model:** Frontier Model A (current frontier model)  
 **Output Artifacts:** `doc/testplan/TEST-xxx.md`  
 **Core Principle:** Test design strictly precedes implementation instructions.
 
@@ -10,7 +10,7 @@
 
 ````text
 You are a Lead Verification & Test Architect. We have defined the requirements and use cases.
-Before creating implementation instructions for the local 27B model, we must design the complete Shift-Left Test Plan (`doc/testplan/TEST-xxx.md`).
+Before creating implementation instructions for the ≥27B coding model, we must design the complete Shift-Left Test Plan (`doc/testplan/TEST-xxx.md`).
 
 REQUIREMENTS LIST:
 <Paste list or content of all doc/requirements/REQ-xxx.md files>

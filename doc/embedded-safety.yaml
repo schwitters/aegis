@@ -83,7 +83,7 @@ deliverables:
   - safety_case                 # Structured safety justification (GSN)
   - build_instructions
 
-# --- 4. Coding Constraints (Strict Directives for 27B Model) -----------------
+# --- 4. Coding Constraints (Strict Directives for ≥27B Coding Model) -----------------
 coding_constraints:
   - Zero dynamic memory allocation; malloc/calloc/realloc/free/alloca are strictly forbidden.
   - Zero recursion (stack depth must be statically bounded).

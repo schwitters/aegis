@@ -655,7 +655,7 @@ exec "$AEGIS_BIN" gate --profile doc/profile.yaml "$@"
             let prompt_content = format!(
                 r#"# Frontier Model Prompt: Reverse Spec Extraction (Brownfield Migration)
 
-Copy and paste the following prompt to your Frontier Model (Claude 3.7 Sonnet / GPT-4.5) alongside your codebase files:
+Copy and paste the following prompt to a current frontier model alongside your codebase files:
 
 ---
 

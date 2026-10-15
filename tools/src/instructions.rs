@@ -35,7 +35,7 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     };
 
     let mut out = String::new();
-    out.push_str("# AGENT INSTRUCTIONS FOR IMPLEMENTATION MODEL (27B)\n\n");
+    out.push_str("# AGENT INSTRUCTIONS FOR THE IMPLEMENTATION MODEL (≥27B CODING MODEL)\n\n");
     out.push_str("> Generated automatically by Aegis Systems Engineering Toolkit.\n\n");
 
     // Section 1: Overview & Domain Profile
