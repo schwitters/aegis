@@ -60,7 +60,9 @@ File: `doc/architecture/system_overview.md` (free-form, no ID)
 - Component diagram (Mermaid) naming every ARCH element
 - Memory and threading model
 
-For each component / architecture element, output:
+For each component / architecture element, output (Rust workspaces: one ARCH element per layer crate, e.g.
+`<project>-domain`, `<project>-application`, `<project>-storage`, `<project>-api`, `<project>-server`; the
+allowed dependencies between them are fixed by the profile's `gate.architecture` policy):
 
 File: `doc/architecture/ARCH-001.md`
 ```markdown

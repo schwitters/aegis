@@ -208,6 +208,7 @@ Annotations are claims made by the model that wrote the code. They are made cred
 
 The verification pipeline executes in strict fail-closed order. An *active* stage that cannot run is red, never skipped:
 1. **Build** — Compiles cleanly for target environment.
+1a. **Architecture** — (Rust workspaces) the crate dependency graph conforms to the profile's layer policy (`gate.architecture.layers` / `restricted`, checked on `cargo metadata`): no forbidden edge between layer crates, framework crates only in their layers, every crate belongs to a layer.
 2. **Lint** — Coding style and static safety rules (`clippy`, `clang-tidy`, `checkstyle`, `ruff`).
 3. **Static Analysis** — AST and flow analysis (`mypy`, `scan-build`, `cargo check`).
 4. **Security Scan** — Language-specific scanners (`cargo-deny`/`cargo-audit`, `pip-audit`/`bandit`). Every check listed in `gate.security.checks` must be covered by a scanner that actually ran; otherwise configure `command`.
@@ -221,7 +222,11 @@ The verification pipeline executes in strict fail-closed order. An *active* stag
 12. **Deliverables** — All paths in `doc/deliverables/manifest.md` exist.
 13. **Reviews** — All review records valid, required blind approvals present, no open blocking findings.
 
-Any external stage (1–4, 6–9) can be replaced by `gate.<stage>.command` (exit code 0 = pass); internal stages (5, 10–13) cannot be overridden. `aegis gate --only a,b` and `--skip c` run partial gates for the inner agent loop and the pre-review run; they end in `PARTIAL GATE GREEN — not an acceptance`.
+Any external stage (1–4, 6–9) can be replaced by `gate.<stage>.command` (exit code 0 = pass); internal stages (1a, 5, 10–13) cannot be overridden.
+
+### Architecture at Compile Time (Rust)
+
+A crate can only use what its `Cargo.toml` declares, so splitting the system into layer crates turns architecture rules into compiler errors (`unresolved import`). The `architecture` stage guards the declarations: adding `<project>-storage` to the domain crate, or `sqlx` to the application crate, fails the gate with a `LAYERING` finding. `aegis init --profile web-enterprise --lang rust --name <project>` scaffolds the layered workspace (`crates/<project>-{domain,application,storage,api,server}`, `tests/` as a member crate, `migrations/`, `openapi/`); each layer crate is documented as an `ARCH-xxx` element. `aegis gate --only a,b` and `--skip c` run partial gates for the inner agent loop and the pre-review run; they end in `PARTIAL GATE GREEN — not an acceptance`.
 
 ## Tailoring & Domain Profiles
 

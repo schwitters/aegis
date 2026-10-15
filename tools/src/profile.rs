@@ -90,6 +90,12 @@ pub struct GateStageConfig {
     /// reviews: required blind approvals per stage, e.g. [spec, requirements, "architecture:2"]
     #[serde(default)]
     pub required: Vec<String>,
+    /// architecture: layer -> layers it may depend on (`*` = any); crates match by `-<layer>` name suffix
+    #[serde(default)]
+    pub layers: std::collections::BTreeMap<String, Vec<String>>,
+    /// architecture: third-party crate -> layers that may depend on it directly
+    #[serde(default)]
+    pub restricted: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Profile {

@@ -681,7 +681,8 @@ rules:
     enforcement: gate+review
     deviation: permitted
     instruction: >
-      Environment variables are read only in the config module (RULE-RSV-010), which carries the single
+      Environment variables are read only in the config module of the server crate (RULE-RSV-010, RULE-RWE-091),
+      which carries the single
       AEGIS-DEVIATION marker plus #[expect(clippy::disallowed_methods, reason = "...")] for std::env::var.
       Secrets are SecretString (RULE-RS-013). No default passwords, no debug routes in release builds
       (#[cfg(debug_assertions)]). gitleaks runs in the security stage.
@@ -715,3 +716,82 @@ rules:
     linter_check: "cargo-deny:check, gate-script:cargo-cyclonedx"
     references:
       asvs: ["v5.0.0-15.1.1", "v5.0.0-15.1.2", "v5.0.0-15.2.1"]
+
+  # ---------------------------------------------------------------- Architecture / workspace layout
+  - id: RULE-RWE-090
+    title: The Crate Graph Is the Architecture
+    category: design
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      The system is a Cargo workspace of layer crates: <project>-domain, -application, -storage, -api, -server, plus
+      the tests/ crate (scaffold: aegis init --profile web-enterprise --name <project>). Allowed direct dependencies:
+      application -> domain; storage -> application, domain; api -> application, domain; server -> all; tests -> all.
+      Framework crates are confined to their layer (sqlx, reqwest: storage; axum, askama: api; hyper,
+      tracing-subscriber: server; no tokio in domain/application). The policy lives in the profile
+      (gate.architecture) and is checked on `cargo metadata`; a needed new edge is an architecture change (review,
+      ARCH update), never a quick Cargo.toml edit. New crates follow the <project>-<layer> naming or fail the gate.
+      Each layer crate is an architecture element: document it as ARCH-xxx (responsibility, public interface).
+    rationale: >
+      A crate cannot use what it does not declare, so the compiler enforces the layering; the gate guards the
+      declarations themselves. Cyclic or upward dependencies are impossible by construction.
+    checks:
+      - { tool: gate-script, check: "aegis gate stage architecture (layers + restricted crates)" }
+    linter_check: "aegis:architecture"
+
+  - id: RULE-RWE-091
+    title: Ports in the Application Layer, Adapters Outside
+    category: design
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      The domain crate holds entities, value objects and pure rules: no I/O, no async runtime, no SQL, no HTTP, no
+      clock or randomness except through parameters. The application crate defines use cases and the ports they need
+      as traits (repositories, mailers, clocks, external systems) with domain types in their signatures. storage and
+      api implement or call these ports; use cases never see sqlx, axum or reqwest types. The server crate is the
+      composition root: it reads configuration (RULE-RWE-080), builds the adapters, injects them into the use cases
+      and starts the router — the only place where concrete types meet.
+    rationale: Business rules stay testable without a database or HTTP stack; adapters are replaceable.
+    example_good: |
+      // <project>-application
+      pub trait DocumentRepository: Send + Sync {
+          fn find(&self, scope: &TenantScope, id: DocumentId)
+              -> impl Future<Output = Result<Option<Document>, RepoError>> + Send;
+      }
+      pub struct ArchiveDocument<R: DocumentRepository> { repo: R }
+
+      // <project>-storage
+      pub struct SqliteDocuments { pool: SqlitePool }
+      impl DocumentRepository for SqliteDocuments { /* sqlx::query_as! ... */ }
+
+  - id: RULE-RWE-092
+    title: No Framework Types Across Layer Boundaries
+    category: design
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Public items of storage and api do not expose sqlx, axum, tower or reqwest types (no sqlx::Error, SqlitePool,
+      axum::Router in signatures other than the ones the server needs to wire them up) and these crates do not
+      re-export framework crates (`pub use sqlx` is forbidden). Errors are mapped at the adapter boundary into the
+      port's error type. Visibility defaults to pub(crate); pub only for the layer's interface.
+    rationale: Re-exports and leaked types would re-create the dependency the crate graph forbids.
+
+  - id: RULE-RWE-093
+    title: OpenAPI Contract Is the Source of Truth for JSON APIs
+    category: design
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      JSON endpoints are specified in openapi/<project>-openapi.yaml before they are implemented (contract first;
+      the file is a specification artefact and goes through review like a requirement). The api crate's DTOs match
+      it: a contract test generates the specification from the code (e.g. utoipa) or validates real responses
+      against the file and fails on any difference. Breaking changes need a new API version (RULE-RSV-007).
+      Server-rendered pages and htmx fragments are not part of the contract.
+    rationale: Frontends (SPA/PWA, other services) and tests depend on a stable, reviewed contract instead of on the implementation.
+    checks:
+      - { tool: test, check: "openapi_contract_matches_implementation" }
+    linter_check: "test:openapi_contract_matches_implementation"

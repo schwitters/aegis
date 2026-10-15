@@ -110,6 +110,9 @@ enum Commands {
         brownfield: bool,
         #[arg(long, default_value = ".")]
         root: String,
+        /// Project name (crate prefix) for scaffolded workspaces; default: directory name
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Synthesize AGENT_INSTRUCTIONS.md for the 27B implementation model
     Instructions {
@@ -673,6 +676,7 @@ fn main() -> Result<()> {
             lang,
             brownfield,
             root,
+            name,
         } => {
             let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
             aegis::init::run_init(
@@ -681,6 +685,7 @@ fn main() -> Result<()> {
                     profile,
                     lang,
                     brownfield,
+                    name,
                 },
             )?;
         }

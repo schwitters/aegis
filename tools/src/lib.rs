@@ -1,3 +1,4 @@
+pub mod architecture;
 pub mod baseline;
 pub mod deviation;
 pub mod gate;
@@ -512,7 +513,7 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
     #[test]
     fn test_init_web_profile_scaffolds_complete_setup() {
         let root = temp_root("init_web");
-        init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false }).unwrap();
+        init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false, name: None }).unwrap();
         for f in ["clippy.toml", "deny.toml", "doc/profile.yaml", "doc/rules/rust-strict.yaml", "doc/rules/rust-service.yaml",
                   "doc/rules/rust-web-enterprise.yaml", "doc/rules/rust-web-htmx.yaml", "doc/rules/workspace-lints.toml"] {
             assert!(root.join(f).exists(), "{} missing", f);
@@ -522,7 +523,69 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         let g = gate::GateRunner::new(root.clone(), prof);
         assert!(g.ruleset_error.is_none(), "{:?}", g.ruleset_error);
         assert_eq!(g.rulesets.len(), 3);
-        assert!(init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "java".into(), brownfield: false }).is_err());
+        assert!(init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "java".into(), brownfield: false, name: None }).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn policy() -> (std::collections::BTreeMap<String, Vec<String>>, std::collections::BTreeMap<String, Vec<String>>) {
+        let layers: std::collections::BTreeMap<String, Vec<String>> = [
+            ("domain", vec![]),
+            ("application", vec!["domain"]),
+            ("storage", vec!["domain", "application"]),
+            ("api", vec!["domain", "application"]),
+            ("server", vec!["domain", "application", "storage", "api"]),
+            ("tests", vec!["*"]),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.into_iter().map(String::from).collect()))
+        .collect();
+        let restricted = [("sqlx".to_string(), vec!["storage".to_string()])].into_iter().collect();
+        (layers, restricted)
+    }
+
+    #[test]
+    fn test_architecture_layer_policy() {
+        let (layers, restricted) = policy();
+        assert_eq!(architecture::layer_of("shop-domain", &layers), Some("domain"));
+        assert_eq!(architecture::layer_of("shop-api", &layers), Some("api"));
+        assert_eq!(architecture::layer_of("shop-apiary", &layers), None);
+        let meta = serde_json::json!({ "packages": [
+            { "name": "shop-domain", "dependencies": [ { "name": "shop-storage", "kind": null } ] },
+            { "name": "shop-application", "dependencies": [ { "name": "shop-domain", "kind": null } ] },
+            { "name": "shop-storage", "dependencies": [ { "name": "shop-application", "kind": null }, { "name": "sqlx", "kind": null } ] },
+            { "name": "shop-api", "dependencies": [ { "name": "sqlx", "kind": "dev" }, { "name": "serde", "kind": null } ] },
+            { "name": "shop-utils", "dependencies": [] },
+            { "name": "shop-tests", "dependencies": [ { "name": "shop-storage", "kind": null } ] }
+        ]});
+        let problems = architecture::check(&meta, &layers, &restricted);
+        let has = |needle: &str| problems.iter().any(|p| p.contains(needle));
+        assert!(has("shop-domain (domain) -> shop-storage (storage)"), "{:#?}", problems);
+        assert!(has("shop-api (api) -> sqlx [dev]: restricted"));
+        assert!(has("UNLAYERED shop-utils"));
+        assert_eq!(problems.len(), 3, "{:#?}", problems);
+        assert!(!architecture::check(&meta, &Default::default(), &restricted).is_empty(), "empty policy must fail");
+    }
+
+    #[test]
+    fn test_init_scaffold_satisfies_layer_policy() {
+        let root = temp_root("init_layers");
+        init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false, name: Some("My Shop".into()) }).unwrap();
+        for f in ["Cargo.toml", "crates/my-shop-domain/src/lib.rs", "crates/my-shop-server/src/main.rs", "tests/Cargo.toml",
+                  "tests/it/main.rs", "openapi/my-shop-openapi.yaml", "migrations/.gitkeep"] {
+            assert!(root.join(f).exists(), "{} missing", f);
+        }
+        let out = std::process::Command::new("cargo")
+            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+        let cfg = prof.get_stage_config("architecture").cloned().unwrap();
+        let problems = architecture::check(&meta, &cfg.layers, &cfg.restricted);
+        assert!(problems.is_empty(), "{:#?}", problems);
+        assert_eq!(meta["packages"].as_array().unwrap().len(), 6);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -36,7 +36,9 @@ aegis init --profile embedded-safety --lang c
 
 # For web applications with a Rust backend (Axum, SQLx; server-rendered, htmx or SPA/PWA frontend; ASVS L2, GDPR):
 # also writes clippy.toml and deny.toml to the repository root and doc/rules/workspace-lints.toml
-aegis init --profile web-enterprise --lang rust
+aegis init --profile web-enterprise --lang rust --name myshop
+#   -> crates/myshop-{domain,application,storage,api,server}, tests/, migrations/, openapi/ (layer policy enforced
+#      by the gate stage `architecture`); an existing Cargo.toml is kept
 ```
 
 This creates the required directory tree (`doc/requirements/`, `doc/architecture/`, `doc/usecases/`, `doc/testplan/`, `doc/reviews/`, `doc/issues/`, `doc/rules/`, and `doc/deliverables/manifest.md`).

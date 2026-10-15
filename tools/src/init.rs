@@ -7,6 +7,115 @@ pub struct InitOptions {
     pub profile: String,
     pub lang: String,
     pub brownfield: bool,
+    /// Project name for scaffolded workspaces (crate prefix); default: name of the root directory
+    pub name: Option<String>,
+}
+
+/// Layered workspace of the web-enterprise profile: (layer, description, internal dependencies).
+/// The layer policy in doc/web-enterprise.yaml (gate.architecture) must stay in sync with this table.
+const WEB_LAYERS: [(&str, &str, &[&str]); 5] = [
+    ("domain", "Entities, value objects and domain rules. Pure: no I/O, no async runtime, no framework types.", &[]),
+    ("application", "Use cases and the ports (traits) they need for persistence and external systems.", &["domain"]),
+    ("storage", "Adapters: SQLx repositories implementing the application ports, outbound clients.", &["domain", "application"]),
+    ("api", "HTTP adapter: Axum routes, extractors, DTOs and templates; calls use cases only.", &["domain", "application"]),
+    ("server", "Composition root: configuration, wiring of adapters to ports, startup and graceful shutdown.", &["domain", "application", "storage", "api"]),
+];
+
+/// Crate-name prefix from an explicit name or the directory name: lowercase, `[a-z0-9-]` only.
+pub fn project_slug(explicit: Option<&str>, root: &Path) -> String {
+    let raw = explicit
+        .map(|s| s.to_string())
+        .or_else(|| root.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "app".to_string());
+    let mut slug = String::new();
+    for c in raw.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.ends_with('-') && !slug.is_empty() {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_end_matches('-').to_string();
+    if slug.is_empty() || slug.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("app-{}", slug).trim_end_matches('-').to_string()
+    } else {
+        slug
+    }
+}
+
+fn member_manifest(name: &str, description: &str, deps: &[String], extra: &str) -> String {
+    let mut out = format!(
+        "[package]\nname = \"{name}\"\ndescription = \"{description}\"\nversion.workspace = true\nedition.workspace = true\n\
+         rust-version.workspace = true\npublish.workspace = true\n{extra}\n[dependencies]\n"
+    );
+    if deps.is_empty() {
+        out.push_str("# No workspace crates and no I/O or framework crates (enforced by `aegis gate`, stage architecture).\n");
+    }
+    for d in deps {
+        out.push_str(&format!("{d}.workspace = true\n"));
+    }
+    out.push_str("\n[lints]\nworkspace = true\n");
+    out
+}
+
+/// Scaffolds the layered Cargo workspace (only when the root has no Cargo.toml yet).
+fn scaffold_rust_web_workspace(root: &Path, slug: &str) -> Result<()> {
+    let crate_name = |layer: &str| format!("{slug}-{layer}");
+    let mut root_manifest = String::from(
+        "# Layered workspace (Aegis web-enterprise). The crate graph is the architecture: a crate can only use what it\n\
+         # declares, and `aegis gate` (stage architecture) rejects declarations that break the layer policy.\n\
+         [workspace]\nresolver = \"3\"\nmembers = [\"crates/*\", \"tests\"]\n\n\
+         [workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n\
+         [workspace.dependencies]\n"
+    );
+    for (layer, _, _) in WEB_LAYERS {
+        root_manifest.push_str(&format!("{} = {{ path = \"crates/{}\" }}\n", crate_name(layer), crate_name(layer)));
+    }
+    root_manifest.push_str("# Third-party versions are pinned here once; members use `<crate>.workspace = true`.\n\n");
+    let lints_start = TEMPLATE_RUST_LINTS.find("[workspace.lints.rust]").unwrap_or(0);
+    root_manifest.push_str(&TEMPLATE_RUST_LINTS[lints_start..]);
+    fs::write(root.join("Cargo.toml"), root_manifest).context("Failed to write Cargo.toml")?;
+
+    for (layer, description, deps) in WEB_LAYERS {
+        let dir = root.join("crates").join(crate_name(layer));
+        fs::create_dir_all(dir.join("src"))?;
+        let deps: Vec<String> = deps.iter().map(|d| crate_name(d)).collect();
+        fs::write(dir.join("Cargo.toml"), member_manifest(&crate_name(layer), description, &deps, ""))?;
+        let header = format!("//! {description}\n\n#![forbid(unsafe_code)]\n");
+        if layer == "server" {
+            fs::write(dir.join("src/main.rs"), format!("{header}\nfn main() {{}}\n"))?;
+        } else {
+            fs::write(dir.join("src/lib.rs"), header)?;
+        }
+    }
+
+    // Integration tests: a virtual workspace does not build a root tests/ directory, so tests/ is a member crate.
+    let all: Vec<String> = WEB_LAYERS.iter().map(|(l, _, _)| crate_name(l)).collect();
+    let tests_extra = "\n[lib]\npath = \"lib.rs\"\n\n[[test]]\nname = \"it\"\npath = \"it/main.rs\"\n";
+    fs::create_dir_all(root.join("tests/it"))?;
+    fs::write(
+        root.join("tests/Cargo.toml"),
+        member_manifest(&crate_name("tests"), "Integration and HTTP tests across all layers.", &all, tests_extra),
+    )?;
+    fs::write(root.join("tests/lib.rs"), "//! Shared fixtures for the integration tests.\n\n#![forbid(unsafe_code)]\n")?;
+    fs::write(
+        root.join("tests/it/main.rs"),
+        "//! Integration tests: one module per feature, each test annotated with `@verifies` and frozen\n\
+         //! in doc/testplan/tests.lock before the implementation starts.\n",
+    )?;
+
+    fs::create_dir_all(root.join("migrations"))?;
+    write_if_missing(&root.join("migrations/.gitkeep"), "")?;
+    fs::create_dir_all(root.join("openapi"))?;
+    write_if_missing(
+        &root.join(format!("openapi/{slug}-openapi.yaml")),
+        &format!(
+            "# Contract of the JSON API (source of truth, RULE-RWE-093). Server-rendered-only apps keep it minimal.\n\
+             openapi: 3.1.0\ninfo:\n  title: {slug} API\n  version: 0.1.0\npaths: {{}}\n"
+        ),
+    )?;
+    write_if_missing(&root.join(".gitignore"), "/target\n")?;
+    Ok(())
 }
 
 // Embed rulesets so aegis init works standalone anywhere
@@ -72,6 +181,9 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
         write_if_missing(&root.join("deny.toml"), TEMPLATE_RUST_DENY)?;
         write_if_missing(&rules_dir.join("workspace-lints.toml"), TEMPLATE_RUST_LINTS)?;
         fs::create_dir_all(doc_dir.join("privacy")).context("Failed to create doc/privacy")?;
+        if !root.join("Cargo.toml").exists() {
+            scaffold_rust_web_workspace(root, &project_slug(opts.name.as_deref(), root))?;
+        }
     }
 
     // 1. Copy Embedded Rulesets into target doc/rules/
@@ -468,10 +580,15 @@ Initial thoughts on technology stack, components, and protocol boundaries.
         println!();
         println!("{}", "Web Profile Setup:".bold());
         println!("  clippy.toml and deny.toml written to the repository root (if missing).");
-        println!(
-            "  Merge {} into the workspace Cargo.toml ([workspace.lints]).",
-            rules_dir.join("workspace-lints.toml").display().to_string().cyan()
-        );
+        let slug = project_slug(opts.name.as_deref(), root);
+        if root.join("crates").join(format!("{slug}-domain")).exists() {
+            println!("  Layered workspace: crates/{slug}-{{domain,application,storage,api,server}}, tests/, migrations/, openapi/");
+        } else {
+            println!(
+                "  Existing Cargo.toml kept: merge {} ([workspace.lints]) and align crate names with gate.architecture.layers.",
+                rules_dir.join("workspace-lints.toml").display().to_string().cyan()
+            );
+        }
         println!("  Create doc/privacy/data-inventory.yaml with the first migration (RULE-RWE-071).");
         println!("  htmx frontend? Enable doc/rules/rust-web-htmx.yaml under `rulesets:` in doc/profile.yaml.");
         println!("  SPA/PWA frontend? Add its build/lint/test commands to the gate stages (see comments in the profile).");

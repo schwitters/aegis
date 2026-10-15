@@ -1,3 +1,4 @@
+use crate::architecture;
 use crate::baseline;
 use crate::deviation;
 use crate::issue;
@@ -36,8 +37,9 @@ pub struct GateRunner {
 }
 
 /// Execution order. Cheap deterministic checks first; reviews last (the final review happens on a green gate).
-pub const STAGES: [(&str, &str); 13] = [
+pub const STAGES: [(&str, &str); 14] = [
     ("Build", "build"),
+    ("Architecture", "architecture"),
     ("Lint", "lint"),
     ("Static Analysis", "static_analysis"),
     ("Security Scan", "security"),
@@ -53,7 +55,7 @@ pub const STAGES: [(&str, &str); 13] = [
 ];
 
 /// Stages implemented by Aegis itself; a `command` override would bypass their checks.
-const INTERNAL_STAGES: [&str; 5] = ["test_freeze", "traceability", "issues", "deliverables", "reviews"];
+const INTERNAL_STAGES: [&str; 6] = ["architecture", "test_freeze", "traceability", "issues", "deliverables", "reviews"];
 
 /// Splits a command line into words, honouring single and double quotes (enough to find the program name).
 fn shell_words(cmd: &str) -> Vec<String> {
@@ -355,6 +357,7 @@ impl GateRunner {
     fn run_builtin(&self, key: &str) -> StageResult {
         match key {
             "build" => self.stage_build(),
+            "architecture" => self.stage_architecture(),
             "lint" => self.stage_lint(),
             "static_analysis" => self.stage_static(),
             "security" => self.stage_security(),
@@ -714,6 +717,44 @@ impl GateRunner {
                 "no built-in mutation testing for `{}`; configure gate.mutation.command",
                 lang
             )),
+        }
+    }
+
+    fn stage_architecture(&self) -> StageResult {
+        if self.lang() != "rust" {
+            return StageResult::NotExecutable(format!("no architecture check for language `{}`", self.lang()));
+        }
+        if !command_exists("cargo") || !self.root.join("Cargo.toml").exists() {
+            return StageResult::NotExecutable("cargo or Cargo.toml missing".to_string());
+        }
+        let cfg = self.profile.get_stage_config("architecture").cloned().unwrap_or_default();
+        let output = Command::new("cargo")
+            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .current_dir(&self.root)
+            .output();
+        let metadata: serde_json::Value = match output {
+            Ok(o) if o.status.success() => match serde_json::from_slice(&o.stdout) {
+                Ok(v) => v,
+                Err(e) => return StageResult::NotExecutable(format!("cannot parse cargo metadata: {}", e)),
+            },
+            Ok(o) => {
+                return StageResult::NotExecutable(format!(
+                    "cargo metadata failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => return StageResult::NotExecutable(format!("cannot run cargo metadata: {}", e)),
+        };
+        let problems = architecture::check(&metadata, &cfg.layers, &cfg.restricted);
+        if problems.is_empty() {
+            let n = metadata.get("packages").and_then(|p| p.as_array()).map(|p| p.len()).unwrap_or(0);
+            println!("    {} crate(s) conform to the layer policy", n);
+            StageResult::Success
+        } else {
+            for p in &problems {
+                println!("    {}", p.red());
+            }
+            StageResult::Failed(1)
         }
     }
 
