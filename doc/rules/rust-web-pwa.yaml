@@ -1,0 +1,189 @@
+# Ruleset: Progressive Web Apps (optional overlay)
+# Schema v2. Layered on top of rust-web-enterprise.yaml (which requires rust-strict.yaml and rust-service.yaml); add it
+# to the profile's `rulesets:` when the frontend is installable and/or works offline. IDs RULE-RWP-*.
+#
+# Scope: service worker, web app manifest, offline data and synchronisation, updates and push notifications — on the
+# client (TypeScript/JavaScript or Rust/WASM) and on the Rust backend that serves and synchronises it. The base rules
+# still apply unchanged: session only in the HttpOnly cookie, offline data only for inventory categories marked
+# `offline: true`, Clear-Site-Data on logout (RULE-RWE-043), strict CSP incl. worker-src/manifest-src (RULE-RWE-042).
+
+ruleset: rust-web-pwa
+schema_version: 2
+id_prefix: RULE-RWP
+description: >
+  Secure, privacy-preserving PWAs on top of rust-web-enterprise.yaml: a same-origin service worker with an explicit
+  caching policy, offline data partitioned per user and wiped on logout, idempotent and conflict-safe offline sync,
+  controlled updates with a kill switch, a self-contained manifest and data-minimal push notifications.
+standard: "W3C Service Workers, Web App Manifest, Push API / RFC 8030, RFC 8291, RFC 8292 (VAPID); OWASP ASVS 5.0.0 (L2); GDPR"
+language: typescript
+
+deviation_policy:
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  placement: on the line directly above the deviating statement
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+rules:
+  - id: RULE-RWP-001
+    title: One Same-Origin Service Worker, Served Uncached
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Exactly one service worker, a first-party script from the application's own origin and build output; no
+      third-party service workers and no importScripts() from other origins. Its scope is the narrowest path that
+      covers the app (no Service-Worker-Allowed header widening it). The backend serves the worker script with
+      Cache-Control: no-cache and the same security headers as every response (RULE-RWE-042), so updates are
+      picked up and the worker runs under the strict CSP.
+    rationale: A service worker intercepts every request in its scope; a foreign or stale worker is a persistent man-in-the-browser.
+    checks:
+      - { tool: test, check: "service_worker_served_no_cache_with_csp" }
+    linter_check: "test:service_worker_served_no_cache_with_csp"
+
+  - id: RULE-RWP-002
+    title: Explicit Caching Policy per Request Class
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      The service worker implements a written policy, one strategy per request class: static build assets with
+      content hashes are precached (cache-first); navigation requests use network-first with an offline fallback
+      page that contains no personal data; API requests are network-only unless their data category is offline-enabled
+      in the data inventory (RULE-RWE-043), and then stale-while-revalidate within per-user caches (RULE-RWP-003).
+      Never cache responses that carry Cache-Control: no-store or private without an offline category, responses to
+      non-GET requests, or responses with Set-Cookie. Cache names carry the build version; old caches are deleted on
+      activate.
+    rationale: Accidental caching of authenticated responses leaks data to the next user of the device and serves stale security decisions.
+    checks:
+      - { tool: test, check: "sw_never_caches_no_store_or_non_get" }
+      - { tool: test, check: "sw_offline_fallback_has_no_personal_data" }
+    linter_check: "test:sw_never_caches_no_store_or_non_get, test:sw_offline_fallback_has_no_personal_data"
+    example_bad: |
+      self.addEventListener("fetch", (e) => {
+        e.respondWith(caches.match(e.request).then((r) => r ?? fetch(e.request).then((res) => {
+          caches.open("v1").then((c) => c.put(e.request, res.clone()));   // caches everything, incl. /api/*
+          return res;
+        })));
+      });
+    example_good: |
+      self.addEventListener("fetch", (e) => {
+        const cls = classify(e.request);                  // "asset" | "navigation" | "api-offline" | "api"
+        if (cls === "asset") e.respondWith(cacheFirst(e.request, ASSET_CACHE));
+        else if (cls === "navigation") e.respondWith(networkFirst(e.request, OFFLINE_PAGE));
+        else if (cls === "api-offline") e.respondWith(staleWhileRevalidate(e.request, userCache()));
+        // "api": no respondWith -> network only
+      });
+
+  - id: RULE-RWP-003
+    title: Offline Data Partitioned per User and Wiped on Logout
+    category: privacy
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Offline data (IndexedDB databases, Cache API caches) is partitioned per user: names derive from an opaque,
+      non-personal user key delivered by the backend (never the e-mail or name). On logout, account switch, account
+      deletion and on a 401 from the backend, the client deletes all of that user's databases and caches and
+      unregisters push subscriptions (RULE-RWP-006); the logout response additionally sends Clear-Site-Data
+      (RULE-RWE-043). Only categories marked `offline: true` in the data inventory are written, each with a maximum
+      age after which the client discards it.
+    rationale: Devices are shared and lost; offline data must not outlive the session that was allowed to see it.
+    checks:
+      - { tool: test, check: "logout_wipes_offline_stores" }
+      - { tool: test, check: "unauthorized_response_wipes_offline_stores" }
+    linter_check: "test:logout_wipes_offline_stores, test:unauthorized_response_wipes_offline_stores"
+    references:
+      asvs: ["v5.0.0-14.3.1"]
+      gdpr: ["Art. 5(1)(e), (f)", "Art. 25", "Art. 32"]
+
+  - id: RULE-RWP-004
+    title: Offline Writes Are Idempotent, Conflict-Safe and Re-Validated
+    category: concurrency
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Writes made offline go into a client outbox and are replayed in order when online. Every replayed request
+      carries an Idempotency-Key (client-generated UUID); the backend stores processed keys per user for a bounded
+      time and answers repeats with the original result instead of executing twice. Updates carry the version they
+      were based on (ETag/If-Match or a version field); the backend rejects stale writes with 412 and the client
+      shows a conflict instead of overwriting. The backend re-validates and re-authorizes every replayed request
+      exactly like an online one (RULE-RWE-010, -020, -021) — a queued request proves nothing. Requests are dropped
+      from the outbox only after a definitive server answer.
+    rationale: Replays after flaky connectivity otherwise create duplicates and lost updates; the outbox is attacker-controllable client state.
+    checks:
+      - { tool: test, check: "replayed_write_with_same_idempotency_key_executes_once" }
+      - { tool: test, check: "stale_write_rejected_with_412" }
+    linter_check: "test:replayed_write_with_same_idempotency_key_executes_once, test:stale_write_rejected_with_412"
+    references:
+      asvs: ["v5.0.0-2.3.1", "v5.0.0-2.3.3"]
+
+  - id: RULE-RWP-005
+    title: Controlled Updates and a Kill Switch
+    category: reliability
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      A new service worker never takes over silently in the middle of a user's work: it waits, the app offers a
+      reload, and skipWaiting() runs only after the user's consent or when no client is open. The backend sends the
+      minimum supported client version (header or version endpoint); older clients that would break the API contract
+      get 426 Upgrade Required for writes and force the update. A kill-switch worker (same URL, unregisters itself and
+      deletes all caches) is part of the build and can be deployed without a frontend release.
+    rationale: A broken or compromised worker otherwise persists on every device until each user manually clears site data.
+    checks:
+      - { tool: test, check: "outdated_client_gets_426" }
+      - { tool: test, check: "kill_switch_worker_clears_caches_and_unregisters" }
+    linter_check: "test:outdated_client_gets_426, test:kill_switch_worker_clears_caches_and_unregisters"
+
+  - id: RULE-RWP-006
+    title: Data-Minimal Push Notifications With Consent
+    category: privacy
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Web Push uses VAPID (key pair from configuration as SecretString, RULE-RWE-080) and the standard payload
+      encryption (RFC 8291) via a backend adapter in the storage layer. Permission is requested only after an explicit
+      user action that explains the purpose, never on page load. Payloads carry no personal data beyond an event type
+      and an opaque ID; the client fetches details after authentication. Subscriptions are stored per user, listed in
+      the data inventory, and deleted on logout, unsubscribe, account deletion and on 404/410 from the push service.
+      Push service endpoints are third parties: they belong in config.outbound_allowlist with a documented legal
+      basis (RULE-RWE-074).
+    rationale: Push payloads pass through browser vendors' push services; notifications appear on lock screens.
+    checks:
+      - { tool: test, check: "push_payload_contains_no_personal_data" }
+      - { tool: test, check: "push_subscription_removed_on_logout_and_gone" }
+    linter_check: "test:push_payload_contains_no_personal_data, test:push_subscription_removed_on_logout_and_gone"
+    references:
+      gdpr: ["Art. 5(1)(c)", "Art. 6", "Art. 44 ff.", "ePrivacy Directive Art. 5(3)"]
+
+  - id: RULE-RWP-007
+    title: Self-Contained, Non-Personal Web App Manifest
+    category: privacy
+    severity: warning
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      The manifest is a static, same-origin file (manifest-src 'self'): name, short_name, icons from the build output,
+      start_url and scope inside the service worker scope, id set explicitly. No personal or tenant data, no
+      tracking parameters in start_url, no external icon or screenshot URLs. Tenant-specific branding, if any, is
+      served from the application's own origin without identifying the user.
+    rationale: The manifest is fetched without credentials and cached by the OS; it must not leak or track.
+    checks:
+      - { tool: test, check: "manifest_same_origin_without_tracking" }
+    linter_check: "test:manifest_same_origin_without_tracking"
+
+  - id: RULE-RWP-008
+    title: Honest Offline State
+    category: reliability
+    severity: warning
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      The UI always shows whether it is online, offline or syncing, how old offline data is, and how many writes are
+      queued. Actions that need the server (payments, permission changes, deletions, anything with legal effect) are
+      disabled offline instead of being queued. A sync failure is visible and actionable, never silently retried
+      forever.
+    rationale: Users act on what they see; stale data presented as current or a silently failing outbox causes real-world damage.

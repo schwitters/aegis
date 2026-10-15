@@ -5,9 +5,10 @@
 # Frontend options (pick one, see `rulesets:` below):
 #   * server-rendered pages (Askama)          -> base rulesets only
 #   * htmx                                    -> + doc/rules/rust-web-htmx.yaml
-#   * SPA / PWA (TypeScript or Rust/WASM)     -> base rulesets only; add the frontend's build/lint/test to the gate
+#   * SPA (TypeScript or Rust/WASM)           -> base rulesets only; add the frontend's build/lint/test to the gate
 #     (e.g. lint.command: "cargo clippy --all-targets --all-features -- -D warnings && npm run lint" — a command
-#     replaces the built-in check, so repeat it) and keep the PWA's offline data within RULE-RWE-043.
+#     replaces the built-in check, so repeat it)
+#   * PWA (installable / offline)             -> like SPA + doc/rules/rust-web-pwa.yaml
 #
 # Project setup (aegis init --profile web-enterprise --lang rust --name <project> creates these):
 #   Cargo.toml + crates/<project>-{domain,application,storage,api,server}, tests/, migrations/, openapi/
@@ -31,6 +32,7 @@ rulesets:
   - doc/rules/rust-service.yaml           # long-running service (RULE-RSV-*)
   - doc/rules/rust-web-enterprise.yaml    # web, ASVS, GDPR — frontend-neutral (RULE-RWE-*)
   # - doc/rules/rust-web-htmx.yaml        # optional: htmx frontends (RULE-RWH-*)
+  # - doc/rules/rust-web-pwa.yaml         # optional: PWAs — service worker, offline sync, push (RULE-RWP-*)
 
 # --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
 quality_axes:
@@ -69,6 +71,7 @@ gate:
       askama: [api]
       tokio: [storage, api, server, tests]
       hyper: [server]
+      web-push: [storage]          # RULE-RWP-006: push delivery is an outbound adapter
       tracing-subscriber: [server]
   lint:
     active: true                 # clippy -D warnings + rulesets' gate_commands (fmt, template scans) + deviation scan

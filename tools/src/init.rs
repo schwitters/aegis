@@ -130,6 +130,7 @@ const RULESET_RUST_STRICT: &str = include_str!("../../doc/rules/rust-strict.yaml
 const RULESET_RUST_SERVICE: &str = include_str!("../../doc/rules/rust-service.yaml");
 const RULESET_RUST_WEB: &str = include_str!("../../doc/rules/rust-web-enterprise.yaml");
 const RULESET_RUST_WEB_HTMX: &str = include_str!("../../doc/rules/rust-web-htmx.yaml");
+const RULESET_RUST_WEB_PWA: &str = include_str!("../../doc/rules/rust-web-pwa.yaml");
 const PROFILE_WEB: &str = include_str!("../../doc/web-enterprise.yaml");
 const TEMPLATE_WEB_CLIPPY: &str = include_str!("../../templates/rust-web/clippy.toml");
 const TEMPLATE_RUST_DENY: &str = include_str!("../../templates/rust/deny.toml");
@@ -176,6 +177,8 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
         write_if_missing(&rules_dir.join("rust-web-enterprise.yaml"), RULESET_RUST_WEB)?;
         // optional overlay, enabled in doc/profile.yaml when the frontend uses htmx
         write_if_missing(&rules_dir.join("rust-web-htmx.yaml"), RULESET_RUST_WEB_HTMX)?;
+        // optional overlay, enabled in doc/profile.yaml for installable / offline-capable frontends
+        write_if_missing(&rules_dir.join("rust-web-pwa.yaml"), RULESET_RUST_WEB_PWA)?;
         write_if_missing(&doc_dir.join("profile.yaml"), PROFILE_WEB)?;
         write_if_missing(&root.join("clippy.toml"), TEMPLATE_WEB_CLIPPY)?;
         write_if_missing(&root.join("deny.toml"), TEMPLATE_RUST_DENY)?;
@@ -591,7 +594,8 @@ Initial thoughts on technology stack, components, and protocol boundaries.
         }
         println!("  Create doc/privacy/data-inventory.yaml with the first migration (RULE-RWE-071).");
         println!("  htmx frontend? Enable doc/rules/rust-web-htmx.yaml under `rulesets:` in doc/profile.yaml.");
-        println!("  SPA/PWA frontend? Add its build/lint/test commands to the gate stages (see comments in the profile).");
+        println!("  SPA/PWA frontend? Add its build/lint/test commands to the gate stages (see comments in the profile);");
+        println!("  for a PWA also enable doc/rules/rust-web-pwa.yaml.");
     }
     if opts.brownfield {
         println!();

@@ -94,6 +94,7 @@ coding_constraints:
 - **[`rust-service.yaml`](rust-service.yaml)**: Overlay for long-running network services (auth by default, rustls, timeouts, graceful shutdown).
 - **[`rust-egui.yaml`](rust-egui.yaml)**: Overlay for egui desktop UIs.
 - **[`rust-web-enterprise.yaml`](rust-web-enterprise.yaml)**: Overlay for browser-facing web apps with a Rust backend (Axum, SQLx/SQLite), OWASP ASVS 5.0 L2 and GDPR; frontend-neutral (server-rendered, SPA, PWA). Load together with `rust-strict.yaml` and `rust-service.yaml`; clippy template: [`templates/rust-web/clippy.toml`](../../templates/rust-web/clippy.toml).
+- **[`rust-web-pwa.yaml`](rust-web-pwa.yaml)**: Optional overlay on top of `rust-web-enterprise.yaml` for PWAs (same-origin service worker with explicit caching policy, per-user offline data wiped on logout, idempotent offline sync, update kill switch, data-minimal push).
 - **[`rust-web-htmx.yaml`](rust-web-htmx.yaml)**: Optional overlay on top of `rust-web-enterprise.yaml` for htmx frontends (CSP-compatible configuration, no history snapshots, cache-correct fragments).
 - **[`java-enterprise.yaml`](java-enterprise.yaml)**: Java 17/21 Backend, immutability by default, records, null-safety via `Optional`.
 - **[`java-google-style.yaml`](java-google-style.yaml)**: Formatting, naming, and Javadoc conforming to the [Google Java Style Guide](https://google.github.io/styleguide/javaguide.html).

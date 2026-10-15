@@ -515,7 +515,7 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         let root = temp_root("init_web");
         init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false, name: None }).unwrap();
         for f in ["clippy.toml", "deny.toml", "doc/profile.yaml", "doc/rules/rust-strict.yaml", "doc/rules/rust-service.yaml",
-                  "doc/rules/rust-web-enterprise.yaml", "doc/rules/rust-web-htmx.yaml", "doc/rules/workspace-lints.toml"] {
+                  "doc/rules/rust-web-enterprise.yaml", "doc/rules/rust-web-htmx.yaml", "doc/rules/rust-web-pwa.yaml", "doc/rules/workspace-lints.toml"] {
             assert!(root.join(f).exists(), "{} missing", f);
         }
         let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();

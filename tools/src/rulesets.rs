@@ -139,6 +139,8 @@ pub fn fence_language(language: Option<&str>) -> &'static str {
         "rust" => "rust",
         "java" => "java",
         "python" => "python",
+        "typescript" | "ts" => "typescript",
+        "javascript" | "js" => "javascript",
         _ => "text",
     }
 }
