@@ -1,0 +1,21 @@
+# Machine gate (tier 3) for rust-web-enterprise.yaml
+disallowed-methods = [
+  { path = "sqlx::query", reason = "RULE-RWE-001: use the query! macro" },
+  { path = "sqlx::query_as", reason = "RULE-RWE-001: use the query_as! macro" },
+  { path = "sqlx::query_scalar", reason = "RULE-RWE-001: use the query_scalar! macro" },
+  { path = "std::process::Command::new", reason = "RULE-RWE-003: no OS commands" },
+  { path = "std::env::var", reason = "RULE-RWE-080: configuration only in the config module" },
+  { path = "std::env::var_os", reason = "RULE-RWE-080: configuration only in the config module" },
+  { path = "tower_http::cors::CorsLayer::permissive", reason = "RULE-RWE-042: configure CORS explicitly" },
+  { path = "tower_http::cors::CorsLayer::very_permissive", reason = "RULE-RWE-042: configure CORS explicitly" },
+  { path = "reqwest::ClientBuilder::danger_accept_invalid_certs", reason = "RULE-RWE-074: always validate TLS certificates" },
+  { path = "reqwest::ClientBuilder::danger_accept_invalid_hostnames", reason = "RULE-RWE-074: always validate TLS certificates" },
+]
+
+disallowed-types = [
+  { path = "tower_http::cors::Any", reason = "RULE-RWE-042: no wildcard origins" },
+]
+
+# Allow unwrap/expect in tests (rust-safety applies to production paths)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

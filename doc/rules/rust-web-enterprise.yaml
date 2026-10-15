@@ -1,0 +1,437 @@
+ruleset: rust-web-enterprise
+description: >
+  Rust web applications (Axum, SQLx/SQLite, Askama, htmx) with multi-tenant isolation,
+  aligned with OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design).
+  Complements rust-safety.yaml; rules defined there are not repeated here.
+standard: "OWASP ASVS 5.0.0 (L2); GDPR Art. 5, 15, 17, 20, 25, 32; TDDDG §25"
+language: rust
+extends:
+  - doc/rules/rust-safety.yaml
+
+# Schema extensions relative to doc/rules/README.md:
+#   references.asvs  -> ASVS IDs in the recommended format v<version>-<chapter>.<section>.<req>
+#   references.gdpr  -> GDPR articles and other legal references
+#   verification     -> lint | test | review (which tier enforces the rule mechanically)
+#   category privacy -> new category for data protection rules
+# linter_check prefixes: clippy:, clippy-disallowed:, cargo-deny:, test:<test_name>, tool:<name>
+
+linter_config:
+  tool: clippy
+  config_file: clippy.toml
+  flags: ["--all-targets", "--", "-D", "warnings"]
+
+rules:
+  # ---------------------------------------------------------------- Injection / encoding
+  - id: RULE-RWE-001
+    title: Compile-time checked SQL queries only
+    category: security
+    severity: error
+    verification: lint
+    instruction: >
+      Use only the macros sqlx::query!, query_as!, and query_scalar!.
+      The functions sqlx::query(), query_as(), and query_scalar() are forbidden.
+      Never build SQL with format!, string concatenation, or push_str.
+      Dynamic filters (e.g. faceted search) only via sqlx::QueryBuilder with push_bind.
+    rationale: Parameterized queries checked against the schema prevent SQL injection and schema drift.
+    linter_check: "clippy-disallowed:sqlx::query,sqlx::query_as,sqlx::query_scalar"
+    references:
+      asvs: ["v5.0.0-1.2.4"]
+
+  - id: RULE-RWE-002
+    title: HTML only through Askama with auto-escaping
+    category: security
+    severity: error
+    verification: review
+    instruction: >
+      HTML is produced exclusively in Askama templates. No HTML in Rust strings,
+      no format!-built HTML, no Html(String) built from user data. The |safe filter is forbidden
+      except for constants from our own code, annotated with // SAFE-HTML: <justification>.
+      Data for JavaScript only via the Askama |json filter in data attributes.
+    rationale: Context-aware output encoding prevents XSS.
+    linter_check: "tool:grep-forbid '\\|safe' templates/ (exceptions require a SAFE-HTML comment)"
+    references:
+      asvs: ["v5.0.0-1.2.1", "v5.0.0-1.2.3", "v5.0.0-3.2.1"]
+
+  - id: RULE-RWE-003
+    title: No operating system commands
+    category: security
+    severity: error
+    verification: lint
+    instruction: >
+      std::process::Command is forbidden. PDF generation, image processing, etc. via Rust crates.
+      Exceptions only in the worker crate, with a fixed argument list, no user input, and a review.
+    rationale: Prevents OS command injection.
+    linter_check: "clippy-disallowed:std::process::Command::new"
+    references:
+      asvs: ["v5.0.0-1.2.5"]
+
+  - id: RULE-RWE-004
+    title: Protect CSV exports against formula injection
+    category: security
+    severity: warning
+    verification: test
+    instruction: >
+      Every CSV/Excel export (order history, bills of materials) goes through a central
+      function that prefixes cells starting with = + - @ tab or CR with ' and quotes per RFC 4180.
+    rationale: Customers open exports in Excel; part names partly originate from external systems.
+    linter_check: "test:csv_export_neutralizes_formulas"
+    references:
+      asvs: ["v5.0.0-1.2.10"]
+
+  # ---------------------------------------------------------------- Input / business logic
+  - id: RULE-RWE-010
+    title: Input DTOs with deny_unknown_fields, domain types via TryFrom
+    category: security
+    severity: error
+    verification: review
+    instruction: >
+      Every handler accepts its own input DTO with #[serde(deny_unknown_fields)],
+      never a database or domain struct. The DTO is converted via TryFrom into validated
+      domain types (PartNumber, Quantity, CompanyId, ...); only these reach the business logic.
+      Validation happens exclusively server-side in the domain crate.
+    rationale: Prevents mass assignment and ensures positive validation at a trusted layer.
+    linter_check: "test:dto_rejects_unknown_fields"
+    references:
+      asvs: ["v5.0.0-2.2.1", "v5.0.0-2.2.2", "v5.0.0-15.3.3"]
+
+  - id: RULE-RWE-011
+    title: Output DTOs with minimal fields
+    category: security
+    severity: error
+    verification: review
+    instruction: >
+      Responses (HTML context or JSON) are built from dedicated view structs containing only
+      the fields that are displayed. Database rows are never serialized directly
+      or passed whole to templates.
+    rationale: Prevents accidental disclosure of fields (purchase prices, internal notes, personal data).
+    references:
+      asvs: ["v5.0.0-15.3.1"]
+      gdpr: ["Art. 5(1)(c) (data minimisation)"]
+
+  - id: RULE-RWE-012
+    title: Atomic order placement and stock handling
+    category: concurrency
+    severity: error
+    verification: test
+    instruction: >
+      Order completion, stock reservation, and status transitions run in a single transaction
+      (SQLite: BEGIN IMMEDIATE). Stock is only decremented conditionally:
+      UPDATE ... SET stock = stock - ?1 WHERE id = ?2 AND stock >= ?1, then check rows_affected.
+      Order status is modelled as a typestate or an enum with explicit allowed transitions in the domain crate.
+    rationale: Prevents overselling and skipping checkout steps.
+    linter_check: "test:concurrent_checkout_never_oversells"
+    references:
+      asvs: ["v5.0.0-2.3.1", "v5.0.0-2.3.3", "v5.0.0-2.3.4", "v5.0.0-15.4.2"]
+
+  - id: RULE-RWE-013
+    title: Business limits defined centrally
+    category: design
+    severity: warning
+    verification: test
+    instruction: >
+      Maximum line items per order, quantity per line item, rows in the quick-order import,
+      and upload sizes are constants in domain::limits and are used in DTO validation
+      and DefaultBodyLimit. No scattered magic numbers.
+    rationale: Documented, enforced limits against abuse and resource exhaustion.
+    linter_check: "test:limits_enforced_at_boundary"
+    references:
+      asvs: ["v5.0.0-2.1.3", "v5.0.0-2.3.2", "v5.0.0-5.2.1", "v5.0.0-15.2.2"]
+
+  # ---------------------------------------------------------------- Authorization / tenants
+  - id: RULE-RWE-020
+    title: Every access to tenant data is bound to the company
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      Repository functions for tenant-scoped tables (orders, order_items, machines,
+      carts, users, addresses, invoices) take a TenantScope (derived from the session, never from
+      URL or form data) as their first parameter and filter in SQL with company_id = ?.
+      Object IDs in URLs without a TenantScope check are forbidden.
+    rationale: Prevents IDOR/BOLA, the most common critical flaw in B2B portals.
+    linter_check: "test:static_tenant_scope (checks all queries in .sqlx/*.json for company_id)"
+    references:
+      asvs: ["v5.0.0-8.2.1", "v5.0.0-8.2.2", "v5.0.0-8.3.1"]
+
+  - id: RULE-RWE-021
+    title: Role checks via extractors
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      Function-level permissions (purchaser, technician, company admin, internal admin) are enforced
+      through typed Axum extractors, e.g. RequireRole<Purchaser>. A handler without such an extractor
+      is public and must be listed in the public_routes allowlist.
+    rationale: Default deny, mechanically verifiable.
+    linter_check: "test:every_route_is_authorized_or_allowlisted"
+    references:
+      asvs: ["v5.0.0-8.1.1", "v5.0.0-8.2.1"]
+
+  # ---------------------------------------------------------------- Authentication
+  - id: RULE-RWE-030
+    title: Password hashing with Argon2id, secrets as SecretString
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      Hash passwords with argon2 (Argon2id, parameters per current OWASP guidance, configured centrally).
+      Passwords, tokens, and API keys are held only as secrecy::SecretString.
+      Length 15 to at least 64 characters, no composition rules, no truncation,
+      check against a local list of breached passwords.
+    rationale: SecretString prevents leaks via Debug/logs; Argon2id is the recommended password hash.
+    linter_check: "test:password_policy"
+    references:
+      asvs: ["v5.0.0-6.2.1", "v5.0.0-6.2.5", "v5.0.0-6.2.8", "v5.0.0-6.2.9", "v5.0.0-6.2.12", "v5.0.0-11.4.2"]
+      gdpr: ["Art. 32"]
+
+  - id: RULE-RWE-031
+    title: Brute-force protection and no user enumeration
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      Login, password reset, and TOTP verification are rate-limited (tower_governor, per IP and per account).
+      Error messages and response times are identical for existing and non-existing accounts
+      (for unknown accounts, verify against a dummy hash anyway).
+    rationale: Protection against credential stuffing.
+    linter_check: "test:login_rate_limited, test:login_no_user_enumeration"
+    references:
+      asvs: ["v5.0.0-6.1.1", "v5.0.0-6.3.1", "v5.0.0-6.3.8"]
+
+  - id: RULE-RWE-032
+    title: Multi-factor authentication
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      TOTP (totp-rs) is available for all accounts and mandatory for internal admins and company admins.
+      Codes are single-use, seeds generated with a CSPRNG. No SMS OTP.
+      Password reset must not bypass MFA.
+    rationale: ASVS L2 requires MFA or an equivalent combination of factors for access.
+    linter_check: "test:mfa_required_for_admin, test:totp_single_use"
+    references:
+      asvs: ["v5.0.0-6.3.3", "v5.0.0-6.4.3", "v5.0.0-6.5.1", "v5.0.0-6.5.3"]
+
+  # ---------------------------------------------------------------- Sessions / browser
+  - id: RULE-RWE-040
+    title: Secure session cookies
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      tower-sessions with cookie name __Host-session, Secure, HttpOnly, SameSite=Lax, Path=/.
+      Call session.cycle_id() after login and after password or MFA changes. Idle and
+      absolute timeouts come from configuration. Logout deletes the session server-side.
+      Disabling an account terminates all of its sessions.
+    rationale: Prevents session fixation and session theft.
+    linter_check: "test:session_cookie_attributes, test:session_rotated_on_login"
+    references:
+      asvs: ["v5.0.0-3.3.1", "v5.0.0-3.3.2", "v5.0.0-3.3.3", "v5.0.0-3.3.4", "v5.0.0-7.2.4", "v5.0.0-7.3.1", "v5.0.0-7.3.2", "v5.0.0-7.4.1", "v5.0.0-7.4.2"]
+
+  - id: RULE-RWE-041
+    title: CSRF protection for all state-changing requests
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      State changes only via POST/PUT/PATCH/DELETE. A middleware rejects such requests
+      if the Origin header (fallback: Sec-Fetch-Site) does not match the application's own origin.
+      htmx requests must additionally carry the HX-Request header.
+    rationale: Defence against cross-site request forgery in addition to SameSite.
+    linter_check: "test:csrf_cross_origin_post_rejected"
+    references:
+      asvs: ["v5.0.0-3.5.1", "v5.0.0-3.5.3"]
+
+  - id: RULE-RWE-042
+    title: Security headers on all responses
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      A central tower-http layer sets: Content-Security-Policy with default-src 'self',
+      frame-ancestors 'none', no unsafe-inline/unsafe-eval; Strict-Transport-Security;
+      X-Content-Type-Options: nosniff; Referrer-Policy: strict-origin-when-cross-origin;
+      Cache-Control: no-store for authenticated pages. htmx and all assets are self-hosted.
+      CorsLayer::permissive/very_permissive and cors::Any are forbidden.
+    rationale: Limits XSS impact, clickjacking, and unintended data flows to third parties.
+    linter_check: "test:security_headers_on_all_routes; clippy-disallowed:tower_http::cors::CorsLayer::permissive"
+    references:
+      asvs: ["v5.0.0-3.4.1", "v5.0.0-3.4.2", "v5.0.0-3.4.3", "v5.0.0-3.4.4", "v5.0.0-3.4.5", "v5.0.0-3.4.6", "v5.0.0-14.3.2"]
+      gdpr: ["Art. 44 ff. (no transfers to third parties)", "TDDDG §25"]
+
+  - id: RULE-RWE-043
+    title: No sensitive data in URLs or browser storage
+    category: security
+    severity: error
+    verification: review
+    instruction: >
+      Never put tokens, email addresses, or session IDs in query strings or paths
+      (exception: single-use, short-lived password reset links). No localStorage/sessionStorage for customer data.
+    rationale: URLs end up in logs, browser history, and Referer headers.
+    references:
+      asvs: ["v5.0.0-14.2.1", "v5.0.0-14.3.3"]
+
+  # ---------------------------------------------------------------- Files / uploads
+  - id: RULE-RWE-050
+    title: Limit uploads, never trust file names
+    category: security
+    severity: error
+    verification: test
+    instruction: >
+      Uploads (quick-order CSV, attachments) are limited with DefaultBodyLimit from domain::limits.
+      Check the type by content, not only by extension. Storage paths are internally generated UUIDs;
+      user-supplied file names are metadata only and encoded per RFC 6266 in Content-Disposition.
+    rationale: Prevents path traversal and denial of service.
+    linter_check: "test:upload_rejects_oversize, test:upload_path_not_user_controlled"
+    references:
+      asvs: ["v5.0.0-5.2.1", "v5.0.0-5.2.2", "v5.0.0-5.3.2", "v5.0.0-5.4.1", "v5.0.0-5.4.2"]
+
+  # ---------------------------------------------------------------- Errors / logging
+  - id: RULE-RWE-060
+    title: Generic error responses, fail closed
+    category: error_handling
+    severity: error
+    verification: test
+    instruction: >
+      A central AppError implements IntoResponse and returns only a generic message
+      plus a correlation ID. Details (SQL, paths, debug output) go to the log only.
+      On errors in validation or ERP queries, the action is aborted and never
+      continued with default values (e.g. no price of 0 when the ERP is unavailable).
+    rationale: No information leakage, no fail-open behaviour.
+    linter_check: "test:internal_error_is_generic"
+    references:
+      asvs: ["v5.0.0-16.5.1", "v5.0.0-16.5.2", "v5.0.0-16.5.3"]
+
+  - id: RULE-RWE-061
+    title: Structured security logging
+    category: observability
+    severity: error
+    verification: test
+    instruction: >
+      tracing with JSON output and UTC timestamps. Mandatory events with time, actor ID,
+      action, and outcome: login success/failure, MFA change, password reset,
+      denied authorization, role change, data export, deletion. User input is logged
+      only as structured fields, never interpolated into the message.
+    rationale: Traceability of security incidents; structured fields prevent log injection.
+    linter_check: "test:security_events_logged"
+    references:
+      asvs: ["v5.0.0-16.2.1", "v5.0.0-16.2.2", "v5.0.0-16.3.1", "v5.0.0-16.3.2", "v5.0.0-16.4.1"]
+      gdpr: ["Art. 32", "Art. 33 (breach detection)"]
+
+  # ---------------------------------------------------------------- Data protection (GDPR)
+  - id: RULE-RWE-070
+    title: Personal data is typed and redacted
+    category: privacy
+    severity: error
+    verification: test
+    instruction: >
+      Personal values (name, email, phone, address, IP address) are wrapped in
+      domain::pii::Pii<T>. Debug and Display print "[PII]"; access only via an explicit
+      .expose() at the point of use (template, email delivery).
+      Pii<T> does not implement Serialize except in the export DTOs for Art. 15/20.
+    rationale: Personal data cannot accidentally end up in logs, error messages, or traces.
+    linter_check: "test:pii_debug_is_redacted (for every struct with Pii fields)"
+    references:
+      asvs: ["v5.0.0-16.2.5", "v5.0.0-14.2.4"]
+      gdpr: ["Art. 5(1)(f)", "Art. 25", "Art. 32"]
+
+  - id: RULE-RWE-071
+    title: Data inventory is complete
+    category: privacy
+    severity: error
+    verification: test
+    instruction: >
+      Every column of every table is classified in doc/privacy/data-inventory.yaml
+      (public | internal | personal | secret) with purpose, legal basis, and retention rule.
+      A new migration without a matching inventory entry fails the gate.
+    rationale: Mechanically links the schema to the record of processing activities and the retention policy.
+    linter_check: "test:data_inventory_matches_schema (PRAGMA table_info against the inventory)"
+    references:
+      asvs: ["v5.0.0-14.1.1", "v5.0.0-14.1.2"]
+      gdpr: ["Art. 5(2) (accountability)", "Art. 30 (records of processing activities)"]
+
+  - id: RULE-RWE-072
+    title: Deletion and restriction per retention policy
+    category: privacy
+    severity: error
+    verification: test
+    instruction: >
+      The worker periodically applies the retention rules from the data inventory.
+      Personal data without a retention obligation is deleted; data subject to commercial
+      or tax retention obligations (invoices, orders) is restricted (restriction of processing)
+      and deleted once the period expires. Account deletion terminates all sessions and
+      removes login data immediately. Retention periods come from the inventory, never as constants in code.
+    rationale: Storage limitation and right to erasure, reconciled with statutory retention obligations.
+    linter_check: "test:retention_job_deletes_expired, test:account_deletion_blocks_and_purges"
+    references:
+      asvs: ["v5.0.0-7.4.2", "v5.0.0-14.2.7"]
+      gdpr: ["Art. 5(1)(e)", "Art. 17", "Art. 18"]
+
+  - id: RULE-RWE-073
+    title: Access requests and data export
+    category: privacy
+    severity: error
+    verification: test
+    instruction: >
+      A function export_personal_data(user_id) returns all data of a user that the inventory
+      marks as personal, as JSON. The test verifies that every personal column appears in the export.
+    rationale: Right of access and data portability without manual database queries.
+    linter_check: "test:export_covers_all_personal_columns"
+    references:
+      gdpr: ["Art. 15", "Art. 20"]
+
+  - id: RULE-RWE-074
+    title: No third-party integrations without approval
+    category: privacy
+    severity: error
+    verification: lint
+    instruction: >
+      No external scripts, fonts, images, analytics, or maps. Outbound HTTP connections
+      only to hosts in config.outbound_allowlist (ERP, mail relay, backup storage), only with rustls
+      and certificate validation. Extending the allowlist requires an issue referencing the DPA.
+    rationale: Every third party is a data transfer and may require consent.
+    linter_check: "clippy-disallowed:reqwest::ClientBuilder::danger_accept_invalid_certs; test:security_headers_on_all_routes (CSP)"
+    references:
+      asvs: ["v5.0.0-12.3.2", "v5.0.0-13.2.4", "v5.0.0-14.2.3"]
+      gdpr: ["Art. 28", "Art. 44 ff.", "TDDDG §25"]
+
+  - id: RULE-RWE-075
+    title: Privacy-preserving logs and backups
+    category: privacy
+    severity: warning
+    verification: review
+    instruction: >
+      IP addresses in logs only truncated or hashed with a rotating salt, except in
+      security events. Log retention comes from configuration. Backups (Litestream) are encrypted.
+    rationale: Technical data is personal data too.
+    references:
+      asvs: ["v5.0.0-16.2.5"]
+      gdpr: ["Art. 5(1)(c), (e)", "Art. 32"]
+
+  # ---------------------------------------------------------------- Configuration / supply chain
+  - id: RULE-RWE-080
+    title: Secrets only from the environment, never in the repository
+    category: security
+    severity: error
+    verification: lint
+    instruction: >
+      Configuration only in the config module (the only place with #[allow] for std::env::var),
+      secrets as SecretString. No default passwords, no debug routes in release builds
+      (#[cfg(debug_assertions)]). gitleaks runs in the gate.
+    rationale: Prevents secret leaks and debug functionality in production.
+    linter_check: "clippy-disallowed:std::env::var; tool:gitleaks"
+    references:
+      asvs: ["v5.0.0-6.3.2", "v5.0.0-13.3.1", "v5.0.0-13.4.2", "v5.0.0-15.2.3"]
+
+  - id: RULE-RWE-081
+    title: Audit dependencies, generate an SBOM
+    category: build
+    severity: error
+    verification: lint
+    instruction: >
+      cargo-deny (advisories, licenses, bans, sources) with no findings. New crates only with a
+      justification in the pull request. cargo-cyclonedx generates the SBOM as a deliverable.
+    rationale: Known vulnerabilities and unexpected sources are detected fail-closed.
+    linter_check: "cargo-deny:check; tool:cargo-cyclonedx"
+    references:
+      asvs: ["v5.0.0-15.1.1", "v5.0.0-15.1.2", "v5.0.0-15.2.1"]
