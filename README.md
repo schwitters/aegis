@@ -17,11 +17,15 @@
 
 ## 🚀 Start Here: From a Specification to Working Software
 
-You hand a coding agent exactly three things — everything else is in this repository:
+**The flow in one sentence:** discuss your product with a frontier model until it writes the specification (and,
+for example, an OpenAPI contract), save the files under `spec/`, and tell a coding agent to add Aegis and prepare
+the project — for a local model or for a frontier model to implement.
+
+You hand the coding agent exactly three things — everything else is in this repository:
 
 | Input | What it is |
 |---|---|
-| **`spec/`** | Your specification as Markdown documents (any structure, any number of files) in the target repository. It stays untouched; every derived artifact cites its section (`source: spec/<file>.md#<anchor>`). |
+| **`spec/`** | Your specification files in the target repository: Markdown documents (any structure, any number) plus optional machine-readable files such as `openapi.yaml`, JSON Schemas or diagrams. It stays untouched; every derived artifact cites its source (`source: spec/<file>.md#<anchor>` or `spec/openapi.yaml`), and `aegis spec check` proves that every section and every file is covered. |
 | **Profile** | The domain rigor (see below), plus optional overlays and a project name. |
 | **Aegis git URL** | `https://github.com/schwitters/aegis.git` — added as a submodule at `tools/aegis`. |
 
@@ -31,6 +35,27 @@ You hand a coding agent exactly three things — everything else is in this repo
 | `enterprise` | Backend services (Java/Rust/C++), maintainability and security focus | — |
 | `local-first` | Desktop clients with optional self-hosted server, privacy by architecture | — |
 | `embedded-safety` | Safety-critical firmware (ISO 26262, ASIL-D, MC/DC) | — |
+
+### Step 0 — Write the specification (chat with a frontier model)
+
+Discuss the idea with a frontier model until it is precise, then let it write the files. A starting prompt:
+
+```text
+I want to build <product idea, users, problem>. Interview me until the scope is clear: users and roles, core use
+cases, data and its sensitivity, integrations, quality targets with numbers (latency, availability, limits),
+security and privacy requirements, deployment, explicit non-goals. Challenge vague answers.
+When I say "write it", produce:
+- spec/01-product.md       problem, users/roles, scope, non-goals, glossary
+- spec/02-use-cases.md     one heading per use case: actor, trigger, main flow, edge cases
+- spec/03-quality.md       measurable non-functional requirements (ISO/IEC 25010 axes), security, privacy
+- spec/04-architecture.md  technology choices and constraints, external systems, data model sketch
+- spec/openapi.yaml        OpenAPI 3.1 contract of the JSON API (if there is one)
+- spec/99-open-questions.md everything still undecided
+Use one heading per topic (headings become citable anchors) and never invent numbers — list them as open questions.
+```
+
+Save the files under `spec/` in a new (or existing) repository and commit them. The headings matter: each one
+becomes a section that a requirement, architecture element or use case must cite.
 
 ### Step 1 — Aegis integration (frontier model with shell access)
 
@@ -65,7 +90,12 @@ The tests are frozen. Continue "Run 2" of tools/aegis/doc/prompts/00_spec_import
 
 `aegis tasks` now generates one self-contained packet per requirement in `doc/tasks/`, ordered by architecture layer.
 
-### Step 3 — Implementation (weaker / local model in an agent harness)
+### Step 3 — Implementation (local model or frontier model in an agent harness)
+
+The packets are written for the weakest model you intend to use (budget: `agent_loop.max_task_tokens` in the profile).
+A local model (e.g. 27B–32B) works through them with the fast gate and escalates when stuck (`aegis escalate`); a
+frontier model can take the same queue with a larger budget and fewer escalations — the gates and frozen tests are
+identical either way.
 
 ```text
 Read AGENT_INSTRUCTIONS.md and doc/tasks/README.md. Work through the task queue in order, one TASK file at a time,

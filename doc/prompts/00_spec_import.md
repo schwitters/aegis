@@ -59,6 +59,8 @@ GROUND RULES
 
 2. TRANSLATE
 2.1 aegis spec sections > /tmp/sections.txt — the complete list of citable sections. Read every file in spec/.
+    Markdown files are cited per heading (spec/<file>.md#<anchor>); every other file (OpenAPI, JSON Schema,
+    diagrams) is one citable unit (spec/<file>) and must be cited or excepted like a section.
 2.2 doc/001_initial_spec.md: consolidated specification in the structure of Prompt 01 (all nine ISO/IEC 25010 axes as
     Required/Recommended/N/A with rationale; scope and explicit non-goals; open questions = the issues you created).
 2.3 doc/requirements/REQ-<AREA>-NNN.md: atomic, testable, one obligation each; frontmatter id, title, status: draft,
@@ -70,8 +72,9 @@ GROUND RULES
 2.5 doc/usecases/UC-xxx.md: implements, audience (user | operator | none), source; main and edge flows.
 2.6 doc/testplan/TEST-xxx.md: every REQ and every ARCH verified (verifies: [REQ-..] / [ARCH-..]); deterministic steps,
     expected results, edge and failure variations.
-2.7 Where applicable: openapi/<project>-openapi.yaml (contract first), doc/privacy/data-inventory.yaml (TBD where
-    unknown), doc/deliverables/manifest.md.
+2.7 Where applicable: openapi/<project>-openapi.yaml (contract first) — if spec/ contains an OpenAPI document, copy
+    it unchanged and cite it from the ARCH element of the api crate (source: [spec/<file>]); doc/privacy/
+    data-inventory.yaml (TBD where unknown), doc/deliverables/manifest.md.
 2.8 Sections that intentionally map to no artifact go into doc/spec-coverage.yaml:
       exceptions:
         - section: spec/<file>.md#<anchor>

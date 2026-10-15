@@ -107,27 +107,36 @@ pub fn parse_sections(file: &str, content: &str) -> Vec<Section> {
     sections
 }
 
-/// Reads all `*.md` under `spec_root` into the trace (`spec_sections`, `spec_files`).
+/// Reads `spec_root` into the trace (`spec_sections`, `spec_files`): Markdown documents by heading, every other file
+/// (OpenAPI, JSON Schema, diagrams, …) as one section keyed by its path, so nothing in spec/ escapes coverage.
 pub fn collect_spec(root: &Path, spec_root: &Path, trace: &mut Trace) -> Result<()> {
     trace.spec_scanned = true;
     let mut files: Vec<_> = WalkDir::new(spec_root)
         .into_iter()
         .filter_map(|e| e.ok())
         .map(|e| e.into_path())
-        .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md"))
+        .filter(|p| p.is_file() && !p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with('.')).unwrap_or(false))
         .collect();
     files.sort();
     if files.is_empty() {
-        trace.doc_errors.push(format!("EMPTY    no specification documents (*.md) under {}", spec_root.display()));
+        trace.doc_errors.push(format!("EMPTY    no specification documents under {}", spec_root.display()));
     }
     for path in files {
         let rel = path.strip_prefix(root).unwrap_or(&path).display().to_string();
-        let content = std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
         trace.spec_files.insert(format!("SPEC:{}", rel), path.clone());
         let base = trace.spec_sections.len();
-        for mut s in parse_sections(&rel, &content) {
-            s.order += base;
-            trace.spec_sections.insert(s.key.clone(), s);
+        if path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let content = std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+            for mut s in parse_sections(&rel, &content) {
+                s.order += base;
+                trace.spec_sections.insert(s.key.clone(), s);
+            }
+        } else {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(&rel).to_string();
+            trace.spec_sections.insert(
+                rel.clone(),
+                Section { key: rel.clone(), file: rel, level: 1, title: name, parent: None, order: base },
+            );
         }
     }
     Ok(())

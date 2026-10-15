@@ -694,6 +694,8 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         full_chain(&root);
         write(&root, "spec/product.md", "# Product\n## Login\n## Reporting\n## History\n");
         write(&root, "spec/nfr.md", "# Quality\n## Performance\n");
+        write(&root, "spec/api/openapi.yaml", "openapi: 3.1.0\n");
+        write(&root, "spec/diagram.png", "\u{89}PNG binary");
         // REQ-001 cites a section; ARCH and UC cite nothing / something broken
         write(&root, "doc/requirements/REQ-001.md", "---\nid: REQ-001\ntitle: Login\nsource: [spec/product.md#login]\n---\n");
         write(&root, "doc/usecases/UC-001.md", "---\nid: UC-001\nimplements: [REQ-001]\nsource: spec/product.md#logn\n---\n");
@@ -710,6 +712,8 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
 
         let cov = spec::coverage_problems(&trace, &spec::load_exceptions(&root.join("doc")).unwrap(), &Default::default(), 3);
         assert!(has(&cov, "UNCOVERED spec/product.md#reporting"), "{:#?}", cov);
+        assert!(has(&cov, "UNCOVERED spec/api/openapi.yaml"), "non-Markdown spec files need a citation too");
+        assert!(has(&cov, "UNCOVERED spec/diagram.png"));
         assert!(!has(&cov, "UNCOVERED spec/product.md#product"), "parent covered through its cited child");
         assert!(!has(&cov, "spec/product.md#history\""), "excepted");
         assert!(has(&cov, "references ISSUE-0042, which does not exist"));
