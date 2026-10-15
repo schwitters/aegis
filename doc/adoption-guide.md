@@ -13,10 +13,10 @@ Greenfield systems adopt the full rigor of the V-Model from day one.
 ```mermaid
 flowchart LR
     A["1. Product Ideation"] --> B["2. aegis init"]
-    B --> C["3. Derive REQ / UC"]
-    C --> D["4. Test Plan BEFORE Code"]
+    B --> C["3. Derive REQ / ARCH / UC"]
+    C --> D["4. Test Plan, Baseline, Frozen Tests"]
     D --> E["5. Agent Instructions"]
-    E --> F["6. 27B Implementation & Gate"]
+    E --> F["6. Implementation Loop, Gate, Review"]
 ```
 
 ### Step-by-Step Procedure
@@ -35,26 +35,31 @@ aegis init --profile enterprise --lang rust
 aegis init --profile embedded-safety --lang c
 ```
 
-This creates the required directory tree (`doc/requirements/`, `doc/usecases/`, `doc/testplan/`, `doc/issues/`, `doc/rules/`, and `doc/deliverables/manifest.md`).
+This creates the required directory tree (`doc/requirements/`, `doc/architecture/`, `doc/usecases/`, `doc/testplan/`, `doc/reviews/`, `doc/issues/`, `doc/rules/`, and `doc/deliverables/manifest.md`).
 
 ### 3. Requirements Derivation & Blind Parallel Review
-- **Frontier Model A** derives initial requirements (`REQ-001..REQ-010`), architecture diagrams, and use cases (`UC-001..`).
-- **Frontier Model B** reviews the artifacts **blindly** (without seeing Model A's rationale) against ISO/IEC 25010 axes.
+- **Frontier Model A** derives initial requirements (`REQ-001..REQ-010`), architecture elements (`ARCH-001..`, each with `satisfies: [REQ-xxx]`), and use cases (`UC-001..`).
+- **Frontier Model B** reviews the artifacts **blindly** (without seeing Model A's rationale) against ISO/IEC 25010 axes. Each review is recorded: `aegis review create --stage requirements ...`; architecture needs two independent reviewers.
 
-### 4. Shift-Left Test Plan
+### 4. Shift-Left Test Plan, Baseline & Frozen Tests
 Before writing implementation code:
-- Model A writes test plans in `doc/testplan/TEST-xxx.md` linked to requirements (`verifies: [REQ-xxx]`).
-- Model A generates `AGENT_INSTRUCTIONS.md` combining the domain profile and ruleset.
+- Model A writes test plans in `doc/testplan/TEST-xxx.md` (`verifies: [REQ-xxx]`, integration tests `verifies: [ARCH-xxx]`); the plan is reviewed.
+- The human approves the specification: `aegis baseline` (dry run) → `aegis baseline --approve <name>`.
+- A test agent implements the tests ([Prompt 04b](prompts/04b_test_implementation.md)); they are reviewed, fail against stubs, and are frozen: `aegis tests freeze`.
+- `aegis instructions --out AGENT_INSTRUCTIONS.md` combines profile, rulesets, architecture, requirements, test plan and the loop protocol.
 
-### 5. Implementation & Gate Enforcement
-- The local 27B model writes the code and tests with `@implements REQ-XXX` and `@verifies TEST-XXX` annotations.
-- Run `aegis gate`:
+### 5. Implementation Loop, Gate & Review
+- Configure the agent harness so that the implementation model cannot write `doc/` or frozen test files (see [Prompt 06](prompts/06_27b_implementation.md)).
+- The local 27B model implements one requirement at a time (`@implements REQ-XXX`), running the fast gate after every change, and escalates after `agent_loop.max_iterations` attempts.
+- Then:
 
 ```bash
-aegis gate --profile doc/profile.yaml
+aegis gate --profile doc/profile.yaml --skip reviews   # full gate on the green working tree
+# Final review of the green diff (Prompt 07), recorded with aegis review create --stage implementation ...
+aegis gate --profile doc/profile.yaml                  # acceptance: all stages incl. reviews
 ```
 
-The gate verifies that all stages (Build, Linter, SAST, Tests, Traceability, Issues, Deliverables) pass cleanly before sprint completion.
+The acceptance gate verifies all stages (Build, Lint, Static Analysis, Security, Test Freeze, Tests, Coverage, Mutation, Traceability incl. baseline, Issues, Deliverables, Reviews) before sprint completion.
 
 ---
 
@@ -92,7 +97,7 @@ Run `aegis init --brownfield` inside the existing repository:
 aegis init --brownfield --lang rust --profile enterprise
 ```
 
-This generates `doc/REVERSE_SPEC_EXTRACTION_PROMPT.md` and baseline requirement templates.
+This generates `doc/REVERSE_SPEC_EXTRACTION_PROMPT.md` and baseline requirement, use-case and architecture templates.
 
 ### Phase 2: Reverse Spec Extraction (Capture Status Quo)
 
@@ -122,16 +127,16 @@ aegis trace --out doc/traceability.md
 Freeze legacy debt. Enforce one non-negotiable rule: **every new bug fix, refactor, or feature must go through the Change Runbook**:
 
 1. Log issue: `aegis issue create --title "..." --type ... --severity ... --related REQ-xxx`
-2. Update/create `REQ-xxx` in `doc/requirements/`.
-3. Add `TEST-xxx` in `doc/testplan/` (test strictly precedes code).
-4. Implement code with `@implements REQ-xxx`.
-5. Verify with `aegis gate` and close issue with `aegis issue close`.
+2. Update/create `REQ-xxx` in `doc/requirements/` and its `ARCH-xxx` allocation; review; `aegis baseline --approve`.
+3. Add `TEST-xxx` in `doc/testplan/`, implement and freeze the test (test strictly precedes code).
+4. Implement code with `@implements REQ-xxx` in the bounded implementation loop.
+5. Verify with `aegis gate`, record the final review, and close the issue with `aegis issue close`.
 
 *Result:* With every commit and sprint, your legacy codebase incrementally converts to 100% auditable, type-safe, and verified systems architecture.
 
 ### Phase 5: Gate Ratcheting
 
 Gradually tighten quality gate constraints:
-- **Level 1:** Build + Unit Tests + Traceability Matrix.
-- **Level 2:** Strict Linters (`clippy`, `clang-tidy`, `checkstyle`) + Security Audit (`cargo-audit`).
-- **Level 3:** Enforce coverage ratcheting (50% → 70% → 85% branch coverage).
+- **Level 1:** Build + Unit Tests + Traceability Matrix + Test Freeze for new tests.
+- **Level 2:** Strict Linters (`clippy`, `clang-tidy`, `checkstyle`) + Security Audit (`cargo-deny` / `cargo-audit`) + approved baseline (`traceability.baseline: required`) + review records.
+- **Level 3:** Enforce coverage ratcheting (50% → 70% → 85% branch coverage) and mutation testing on changed code (`cargo mutants --in-diff` via `gate.mutation.command`, then a global `threshold`).

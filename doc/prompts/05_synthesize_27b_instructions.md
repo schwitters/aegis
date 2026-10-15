@@ -1,6 +1,6 @@
 # Prompt 05: Synthesizing Agent Instructions for 27B Implementation Model
 
-**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5) or synthesized via `aegis instructions`  
+**Target Model:** Frontier Model A (Claude 3.7 Sonnet / GPT-4.5) or synthesized via `aegis instructions` (preferred: it renders the loop protocol from the profile's `agent_loop`)  
 **Output Artifact:** `AGENT_INSTRUCTIONS.md` (or prompt payload given to the 27B model)  
 **Core Purpose:** Externalizing all implicit architectural knowledge, rules, and requirements into an unambiguous, bullet-proof prompt.
 
@@ -44,12 +44,17 @@ MANDATORY SECTIONS IN SYNTHESIZED INSTRUCTIONS:
      `@implements REQ-XXX`
    - Direct the model that EVERY unit test MUST contain:
      `@verifies TEST-XXX`
-5. **Step-by-Step Implementation Sequence:**
-   - Step 1: Data types and error enums
-   - Step 2: Core modules
-   - Step 3: Test cases covering all TEST-xxx files
-6. **Definition of Done for the 27B Model:**
-   - Builds without warnings.
-   - All tests pass.
-   - Zero missing `@implements` or `@verifies` annotations.
+5. **Frozen Tests:**
+   - The tests listed in `doc/testplan/tests.lock` already exist and are read-only for the model.
+   - The model makes them pass by changing production code only; it never edits `doc/` or test files.
+6. **Task Queue & Loop Protocol:**
+   - Ordered list of tasks, one requirement each, with the frozen tests that verify it
+     (order: data types and error enums first, then core modules along the dependency order of the ARCH elements).
+   - After every change: `aegis gate --profile <PROFILE> --only build,lint,test_freeze,tests`.
+   - At most `agent_loop.max_iterations` gate runs per task; then stop and write `ESCALATION-<REQ-ID>.md`
+     (format in Prompt 06). Escalate immediately on ambiguity instead of guessing.
+7. **Definition of Done for the 27B Model:**
+   - Fast gate green for every task (builds without warnings, all frozen tests pass, tests unmodified).
+   - Zero missing `@implements` annotations.
+   - Every unfinished task has an escalation report.
 ```

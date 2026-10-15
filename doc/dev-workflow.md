@@ -1,7 +1,7 @@
 ---
 title: Spec-Driven Multi-Model Development Workflow
 status: active
-version: 2.0
+version: 3.0
 ---
 
 # Spec-Driven Multi-Model Development Workflow
@@ -21,25 +21,32 @@ The process is fundamentally a **V-Model with AI agents as executors**: The desc
 ## Workflow Pipeline
 
 1. **Ideation** — Collaborative discussion of a product idea and scope with Frontier Model A; output is `doc/001_initial_spec.md`.
-2. **Spec Review** — Independent, blind review of the spec with a second Frontier Model B (and optionally local uncensored models). Findings are refined until the specification is solid.
+2. **Spec Review** — Independent, blind review of the spec with a second Frontier Model B (and optionally local uncensored models). Every review is recorded as `doc/reviews/REVIEW-xxxx.md` (see *Review Records*). Findings are dispositioned until the specification is solid.
 3. **Artifact Derivation** — From the approved specification, Model A derives:
    - Requirements (`doc/requirements/REQ-xxx.md`)
-   - Architecture (`doc/architecture/`)
+   - Architecture elements (`doc/architecture/ARCH-xxx.md`, each declaring `satisfies: [REQ-xxx]`)
    - Use Cases (`doc/usecases/UC-xxx.md`)
-4. **Document Review** — Requirements and use cases undergo at least one independent review; architecture requires two independent blind reviews.
-5. **Test Plan** — Test plan creation (`doc/testplan/TEST-xxx.md`). Built deliberately *before* implementation instructions so that testability constrains the code.
-6. **Agent Instructions** — Formulation of implementation prompts for the local 27B model. All implicit knowledge must be made explicit.
-7. **Implementation** — The 27B model generates code and tests with `@implements REQ-xxx` and `@verifies TEST-xxx` annotations.
-8. **Final Review** — Review of the implementation with Frontier models; findings incorporated.
-9. **Verification (Execution Gate)** — The test suite is *executed* via `aegis gate`. Models may consider broken code plausible when reading; execution measures reality.
-10. **Deliverables & Acceptance** — Artifacts are verified against the Deliverables Manifest (`doc/deliverables/manifest.md`).
+4. **Document Review** — Requirements and use cases undergo at least one independent review; architecture requires two independent blind reviews (enforced by `gate.reviews.required`).
+5. **Test Plan** — Test plan creation (`doc/testplan/TEST-xxx.md`). Requirement tests declare `verifies: [REQ-xxx]`; integration tests declare `verifies: [ARCH-xxx]`. Built deliberately *before* implementation instructions so that testability constrains the code.
+6. **Specification Baseline** — After the reviews, the human approves the specification: `aegis baseline --approve <name>` records the content hash of every REQ/ARCH/UC/TEST in `doc/baseline.lock`.
+7. **Test Implementation & Freeze** — A test agent (Frontier model or a separate agent run — never the implementation model) implements the test plan as executable tests in dedicated test files (`@verifies TEST-xxx`). The tests are reviewed (stage `testplan`), must compile and fail for the right reason, and are then frozen: `aegis tests freeze` writes `doc/testplan/tests.lock`.
+8. **Agent Instructions** — `aegis instructions` synthesizes the implementation prompt, including the loop protocol. All implicit knowledge must be made explicit.
+9. **Implementation Loop** — The implementation model works **one requirement at a time** in a closed loop: implement → `aegis gate --only build,lint,test_freeze,tests` → fix, at most `agent_loop.max_iterations` attempts per task. If the fast gate stays red, or the specification is ambiguous, the model stops and writes an escalation report that a Frontier model or the human resolves (fix the spec → back to step 3/5, or give the model a precise hint).
+10. **Full Gate** — `aegis gate --skip reviews` runs every remaining stage (security, coverage, mutation testing, traceability, issues, deliverables). Red results go back to step 9.
+11. **Final Review** — Only a *green* diff is reviewed by Frontier models (cheap deterministic checks first, expensive reviews second). Findings are recorded in a review record; accepted findings go back to step 9 and through the full gate again.
+12. **Acceptance Gate** — `aegis gate` with all stages, including `reviews`. Partial runs (`--only`/`--skip`) are never an acceptance.
+13. **Deliverables & Acceptance** — Artifacts are verified against the Deliverables Manifest (`doc/deliverables/manifest.md`).
 
 ## Core Rationale
 
 - **Cross-Review with Heterogeneous Models** mitigates systematic blind spots. Different model families have different training distributions and spot distinct error classes.
 - **Test Plan Before Instructions** establishes testability as an architectural constraint.
-- **Transition to the 27B Execution Model** is the most sensitive link. The agent instructions bear the full burden: what larger models know implicitly must be stated explicitly.
+- **Tests Before Code, Written by Someone Else** — the model that has to pass the tests must not be able to write or weaken them. Frozen tests (`test_freeze` stage) make this mechanical rather than a matter of prompt discipline.
+- **Mutation Testing Measures Test Strength** — coverage proves code was *executed*, not that a wrong result would be *detected*. The `mutation` stage replaces the LLM opinion "are these tests superficial?" with a measured mutation score.
+- **Closed Loop, Bounded Autonomy** — the implementation model gets fast, deterministic feedback and a hard iteration limit. Escalation is a normal outcome, not a failure: it surfaces specification defects instead of letting the model guess.
+- **Gate Before Review** — a Frontier review of code that does not build or pass its tests wastes the most expensive resource in the pipeline.
 - **Verification ≠ Review.** LLMs reading code cannot replace executing tests. The execution gate measures reality deterministically.
+- **Changes Against a Baseline** — once approved, a changed requirement automatically marks its downstream artifacts and code as `SUSPECT` until they are re-reviewed and re-baselined (ISO 26262-8 §7/§8).
 
 ## Artifact Repository Structure
 
@@ -48,13 +55,28 @@ All artifacts are version-controlled under `doc/` in Markdown and YAML:
 ```
 doc/
   requirements/    # REQ-001.md, ...
+  architecture/    # ARCH-001.md, ... (satisfies: [REQ-xxx]) + free-form overviews/diagrams
   usecases/        # UC-001.md, ...
-  architecture/    # Component diagrams, interface specs
-  testplan/        # TEST-001.md, ...
+  testplan/        # TEST-001.md, ... + tests.lock (frozen test files)
+  reviews/         # REVIEW-0001.md, ... (review records with finding dispositions)
   deliverables/    # manifest.md (Delivery criteria)
   issues/          # ISSUE-0001.md, ... (Lifecycle tracking)
   rules/           # Language-specific coding rulesets
-  traceability.md  # Generated matrix (REQ -> UC -> TEST -> Code)
+  baseline.lock    # Approved specification baseline (generated by `aegis baseline --approve`)
+  traceability.md  # Generated matrix (REQ -> ARCH -> UC -> TEST -> Code)
+```
+
+### Artifact Metadata
+
+Every file in `requirements/`, `usecases/` and `testplan/` (except `README.md`/`index.md`) must carry metadata with an `id`, either as YAML frontmatter or as a ` ```yaml ` block. In `architecture/`, only files with metadata are artifacts; overviews and diagrams may be free-form. Missing, unparsable or duplicate metadata, IDs that do not match their directory, and list entries that are not valid IDs are reported as `INVALID`/`DUPLICATE` and fail the gate — a malformed artifact is never silently dropped from the matrix.
+
+```markdown
+---
+id: ARCH-003
+title: Session Store
+satisfies: [REQ-002, REQ-007]
+---
+## Responsibility / Interfaces / Threading & Memory Model
 ```
 
 ## Issue Schema
@@ -97,24 +119,76 @@ Problem statement or task requirement.
 - 2026-08-31: created
 ```
 
+## Review Records
+
+Findings and issues are separated, but findings are no longer transient chat output: every review is a work product under `doc/reviews/REVIEW-XXXX.md` (create the skeleton with `aegis review create --stage <stage> --artifact <path> --reviewer <model> --author <model>`).
+
+```markdown
+---
+id: REVIEW-0003
+stage: architecture        # spec | requirements | architecture | usecases | testplan | implementation
+artifacts: [doc/architecture/ARCH-001.md, doc/architecture/ARCH-002.md]
+reviewer: frontier-b       # must differ from author
+author: frontier-a
+blind: true                # only blind reviews count towards gate.reviews.required
+date: 2026-10-15
+verdict: approved_with_revisions   # pending | approved | approved_with_revisions | rejected
+findings:
+  - id: CRIT-1
+    severity: critical     # low | medium | high | critical
+    title: Session store has no eviction bound
+    status: accepted       # open | accepted | rejected | deferred
+    disposition: "Added max_sessions to ARCH-003, new REQ-012"
+  - id: FIND-2
+    severity: medium
+    title: Clarify clock source
+    status: deferred
+    issue: ISSUE-0007      # deferred findings must reference an existing issue
+---
+## Review Report
+<full reviewer output>
+```
+
+The `reviews` gate stage fails on: open `high`/`critical` findings, accepted/rejected findings without a disposition, deferred findings without an existing issue, self-reviews (`reviewer == author`), `pending` verdicts, a latest review per stage that is `rejected`, and missing blind approvals required by the profile (`required: [spec, "architecture:2"]` = two *distinct* reviewers).
+
+## Baselines & Suspect Links
+
+`aegis baseline` (dry run) lists every specification artifact that is new, changed or removed since the last approval, together with the downstream links that become suspect. `aegis baseline --approve <name>` records the approval in `doc/baseline.lock`; it refuses while the specification has structural defects (`INVALID`, `DUPLICATE`, `ORPHAN`). GAPs are allowed, because the specification is baselined before code exists.
+
+After a baseline exists, `aegis trace` and the `traceability` gate stage report:
+- `UNREVIEWED <ID>` — the artifact changed (or appeared/disappeared) since approval.
+- `SUSPECT <ID or file:line>` — an ARCH/UC/TEST that references a changed REQ/ARCH, or code/test locations annotating a changed REQ/TEST.
+
+With `gate.traceability.baseline: required`, a missing baseline fails the gate. `aegis impact --changed` seeds the blast-radius analysis with all unapproved changes.
+
+## Frozen Tests
+
+`aegis tests freeze` hashes every source file containing `@verifies TEST-xxx` into `doc/testplan/tests.lock` (`sha256sum -c` compatible). The `test_freeze` gate stage fails if a frozen file was modified or deleted, if a file with `@verifies` is not frozen, or if a file mixes `@verifies` tests with `@implements` production code (such tests could not be frozen without freezing the code under test — put them in dedicated test files).
+
+Re-freezing is a human decision after a test review, exactly like re-baselining. Protect `doc/baseline.lock`, `doc/testplan/tests.lock` and the frozen files from the implementation agent (CODEOWNERS / branch protection, and agent-harness deny rules such as `Edit(doc/**)`, `Bash(aegis tests freeze*)`, `Bash(aegis baseline --approve*)`).
+
 ## Definition of Done per Stage
 
 | Stage | Definition of Done |
 |---|---|
 | **Spec** | Reviews incorporated; zero open high/critical findings; explicit scope and non-goals. |
-| **Requirements** | Every requirement has an ID (`REQ-xxx`); functional and non-functional covered; ISO 25010 axes actively classified; no contradictions. |
-| **Architecture** | Covers all requirements; core architectural trade-offs justified; interfaces defined. |
+| **Requirements** | Every requirement has an ID (`REQ-xxx`); functional and non-functional covered; ISO 25010 axes actively classified; no contradictions; review recorded. |
+| **Architecture** | Every requirement allocated to an `ARCH-xxx` (`satisfies`); core trade-offs justified; interfaces defined; two independent blind reviews recorded. |
 | **Use Cases** | Every use case references at least one requirement (`implements: [REQ-xxx]`); edge cases covered. |
-| **Test Plan** | Every requirement mapped to at least one test (`verifies: [REQ-xxx]`); tests are executable and falsifiable. |
-| **Agent Instructions** | Zero implicit context required; 27B model can implement without guessing. |
-| **Implementation** | Final review incorporated; `aegis gate` passes (green); all deliverables present in manifest. |
+| **Test Plan** | Every requirement and every architecture element verified by at least one test (`verifies: [REQ-xxx]` / `[ARCH-xxx]`); tests are executable and falsifiable; specification baseline approved. |
+| **Tests** | Every `TEST-xxx` implemented (`@verifies`), reviewed, failing for the right reason before implementation, frozen (`tests.lock`). |
+| **Agent Instructions** | Zero implicit context required; implementation model can implement without guessing; loop limits and escalation format stated. |
+| **Implementation** | Fast gate green per task; full gate green; final review of the green diff recorded with all findings dispositioned; acceptance gate (all stages) green; all deliverables present in manifest. |
 
 ## Traceability Mechanism
 
-Traceability is maintained through comment annotations and verified by `aegis trace`:
+Traceability is maintained through metadata and comment annotations and verified by `aegis trace`:
+- **Architecture:** `ARCH-xxx` declares `satisfies: [REQ-xxx]`; integration tests declare `verifies: [ARCH-xxx]` (V-model pairing architecture ↔ integration test).
 - **Code:** Annotates `@implements REQ-XXX`
-- **Tests:** Annotate `@verifies TEST-XXX`
-- **Matrix:** Automatically compiled into `doc/traceability.md`. Detects **Gaps** (`GAP`) and **Orphans** (`ORPHAN`).
+- **Tests:** Annotate `@verifies TEST-XXX`; every `TEST-xxx` in the test plan must be implemented.
+- **Matrix:** Automatically compiled into `doc/traceability.md`. Detects **Gaps** (`GAP`), **Orphans** (`ORPHAN`), malformed artifacts (`INVALID`, `DUPLICATE`), an empty specification (`EMPTY`) and, against the baseline, `UNREVIEWED` and `SUSPECT` links.
+
+Annotations are claims made by the model that wrote the code. They are made credible by the frozen tests that verify the same requirement and by the final review — not by the annotation itself.
 
 ## Quality Model (ISO/IEC 25010:2023)
 
@@ -132,16 +206,22 @@ Traceability is maintained through comment annotations and verified by `aegis tr
 
 ## Execution Gate (CI / Automation)
 
-The verification pipeline executes in strict fail-closed order:
+The verification pipeline executes in strict fail-closed order. An *active* stage that cannot run is red, never skipped:
 1. **Build** — Compiles cleanly for target environment.
 2. **Lint** — Coding style and static safety rules (`clippy`, `clang-tidy`, `checkstyle`, `ruff`).
 3. **Static Analysis** — AST and flow analysis (`mypy`, `scan-build`, `cargo check`).
-4. **Security Scan** — Dependency audit and SAST (`cargo-audit`, `pip-audit`, `bandit`).
-5. **Tests** — All unit and integration tests run and pass.
-6. **Coverage** — Statement/Branch/MC-DC coverage threshold met.
-7. **Traceability** — `aegis trace` finds zero gaps and zero orphaned annotations.
-8. **Issues** — Zero open critical/high blockers in `doc/issues/`.
-9. **Deliverables** — All paths in `doc/deliverables/manifest.md` exist.
+4. **Security Scan** — Language-specific scanners (`cargo-deny`/`cargo-audit`, `pip-audit`/`bandit`). Every check listed in `gate.security.checks` must be covered by a scanner that actually ran; otherwise configure `command`.
+5. **Test Freeze** — Frozen test files unchanged, no unfrozen or mixed test files.
+6. **Tests** — All unit and integration tests run and pass.
+7. **Coverage** — Statement/Line/Branch/MC-DC threshold met. A missing threshold is red, not 0 %.
+8. **Mutation Testing** — Mutation score ≥ `threshold` (`cargo-mutants`, PIT; others via `command`).
+9. **Load Test** — Only via `command`; the scenario must assert its own thresholds.
+10. **Traceability** — `aegis trace` finds zero gaps, orphans, malformed artifacts and (with a baseline) zero unreviewed/suspect links.
+11. **Issues** — Zero open critical/high blockers in `doc/issues/`.
+12. **Deliverables** — All paths in `doc/deliverables/manifest.md` exist.
+13. **Reviews** — All review records valid, required blind approvals present, no open blocking findings.
+
+Any external stage (1–4, 6–9) can be replaced by `gate.<stage>.command` (exit code 0 = pass); internal stages (5, 10–13) cannot be overridden. `aegis gate --only a,b` and `--skip c` run partial gates for the inner agent loop and the pre-review run; they end in `PARTIAL GATE GREEN — not an acceptance`.
 
 ## Tailoring & Domain Profiles
 

@@ -41,6 +41,10 @@ gate:
     active: true
     checks: [dependency_audit, license_scan, sast, secrets_scan]
     note: Dependency vulnerability and license scans are critical for generated code.
+    # No built-in scanner covers these checks for Java: the stage stays red until a command covers all of them, e.g.
+    # command: "./mvnw -q org.owasp:dependency-check-maven:check && gitleaks detect --no-banner"
+  test_freeze:
+    active: true                   # tests are implemented + reviewed first, then frozen (aegis tests freeze)
   tests:
     active: true
     levels: [unit, integration, contract]  # API contract testing
@@ -49,14 +53,30 @@ gate:
     metric: branch
     threshold: 80                  # Pragmatic production threshold
     fail_below: true
+    # No built-in Java coverage: configure JaCoCo check rules in the pom, then e.g.
+    # command: "./mvnw -q verify jacoco:check"
+  mutation:
+    active: true
+    threshold: 70                  # minimum mutation score (%), built-in via PIT (pitest-maven)
   load_test:
     active: true
     note: Latency and throughput thresholds derived from non-functional requirements.
+    # Required: the scenario must assert the thresholds itself (non-zero exit on violation), e.g.
+    # command: "k6 run --quiet load/slo.js"
   traceability:
     active: true
     bidirectional: false           # Forward traceability (REQ -> Test -> Code)
+    baseline: required             # approved doc/baseline.lock; changed REQs mark downstream links SUSPECT
   deliverables:
     active: true
+  reviews:
+    active: true
+    required: [spec, requirements, "architecture:2", testplan, implementation]   # blind approvals per stage ("stage:n" = n distinct reviewers)
+
+# --- 2b. Implementation Loop (see doc/prompts/06_27b_implementation.md) -------
+agent_loop:
+  max_iterations: 3              # fast-gate attempts per task before the model must escalate
+  fast_stages: [build, lint, test_freeze, tests]
 
 # --- 3. Deliverables ---------------------------------------------------------
 deliverables:

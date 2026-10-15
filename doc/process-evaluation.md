@@ -19,31 +19,39 @@ The development process merges traditional systems engineering principles (V-Mod
 ```mermaid
 flowchart TD
     subgraph P1 ["1. Specification & Shift-Left (Frontier Models)"]
-        Idea["Product Idea"] --> Spec["Specification"]
-        Spec --> Rev1["Blind Parallel Review"]
+        Idea["Product Idea"] --> Spec["Initial Spec"]
+        Spec --> Rev1["Blind Parallel Review (recorded)"]
         Rev1 --> Req["Requirements & ISO 25010"]
-        Req --> Arch["Architecture & Use Cases"]
+        Req --> Arch["Architecture (ARCH satisfies REQ) & Use Cases"]
         Arch --> TP["Test Plan BEFORE Implementation"]
+        TP --> Base["aegis baseline --approve"]
+        Base --> TI["Test Agent: implement + review tests"]
+        TI --> Freeze["aegis tests freeze"]
     end
 
-    subgraph P2 ["2. Synthesis & Implementation (27B Model)"]
-        Prof["Domain Profile: doc/*.yaml"] --> Comp["Instruction Synthesis"]
+    subgraph P2 ["2. Synthesis & Implementation Loop (27B Model)"]
+        Prof["Domain Profile: doc/*.yaml"] --> Comp["aegis instructions"]
         Rules["Coding Ruleset: doc/rules/*.yaml"] --> Comp
-        TP --> Comp
-        Comp --> Code["27B Implementation (@implements REQ-xxx)"]
+        Freeze --> Comp
+        Comp --> Task["Next task: one REQ"]
+        Task --> Code["Implement (@implements REQ-xxx)"]
+        Code --> Fast{"Fast gate: build, lint, test_freeze, tests"}
+        Fast -->|red, attempts left| Code
+        Fast -->|green| Task
+        Fast -->|limit reached| Esc["Escalation report"]
+        Esc --> Spec
     end
 
-    subgraph P3 ["3. Verification & Gate (Automated Pipeline)"]
-        Code --> Rev2["Final Review Frontier"]
-        Rev2 --> Gate["tools/gate.sh / aegis gate"]
-        Gate --> Build["Build & Linter & SAST"]
-        Gate --> Test["Tests & Coverage"]
-        Gate --> Trace["aegis trace (Matrix)"]
-        Gate --> Deliv["Deliverables Manifest"]
+    subgraph P3 ["3. Verification & Acceptance"]
+        Task -->|queue done| Gate["Full gate: security, coverage, mutation, traceability"]
+        Gate --> Rev2["Final Review of green diff (recorded)"]
+        Rev2 -->|accepted findings| Task
+        Rev2 --> Acc["Acceptance gate incl. reviews"]
+        Acc --> Deliv["Deliverables Manifest"]
     end
 
     subgraph P4 ["4. Evolution & Change Management"]
-        Feedback["Bug / Wish / Feedback"] --> Impact["aegis impact (Blast Radius)"]
+        Feedback["Bug / Wish / Feedback"] --> Impact["aegis impact (Blast Radius, --changed)"]
         Impact --> Depth{"Impact Depth"}
         Depth -->|Implementation| TP
         Depth -->|Functional| Req
@@ -97,6 +105,11 @@ flowchart TD
 | **Parsing Sensitivity in Mixed Markdown** | Scanners capture code blocks in non-spec Markdown. | Scopes strictly bounded to `doc/requirements/`, `doc/usecases/`, `doc/testplan/`. |
 | **Linter Configuration Drift** | YAML rules in `doc/rules/` diverge from native tool configs. | Single source of truth in rulesets mapped directly to linter arguments. |
 | **High Safety Levels (MC/DC)** | Generic coverage tools only provide Branch/Statement coverage. | Fail-closed gate blocks completion unless a qualified project adapter is configured. |
+| **Implementation Model Games the Tests** | The model that must pass the tests could edit or weaken them. | Tests are written by a test agent, reviewed and frozen (`test_freeze` stage); harness deny rules on `doc/` and test files. |
+| **Superficial Tests** | Coverage proves execution, not detection. | `mutation` stage with a minimum mutation score; surviving mutants are input to the final review. |
+| **Silent Spec Drift** | A requirement edit leaves tests and code silently outdated. | Approved baseline; changed artifacts are `UNREVIEWED`, their downstream links `SUSPECT` until re-baselined. |
+| **Lost Review Rationale** | Findings vanish with the chat session. | Review records in `doc/reviews/` with mandatory dispositions; gate enforces independent approvals. |
+| **Runaway Agent Loops** | Weak models iterate indefinitely or "fix" by suppression. | `agent_loop.max_iterations`, mandatory escalation report; suppressions only with permitted `AEGIS-DEVIATION` markers, audited in the final review. |
 
 ---
 

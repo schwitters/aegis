@@ -42,6 +42,9 @@ gate:
   security:
     active: true
     checks: [cwe, dependency_audit]
+    # No built-in scanner for C: configure a qualified tool chain, e.g. command: "cppcheck --addon=cert --error-exitcode=1 src"
+  test_freeze:
+    active: true
   tests:
     active: true
     levels: [unit, integration, hil]   # Hardware-in-the-Loop for safety verification
@@ -50,11 +53,25 @@ gate:
     metric: mcdc                # ASIL-D: MC/DC. (A: statement, B/C: branch)
     threshold: 100
     fail_below: true
+    # Requires a qualified MC/DC adapter: command: "<qualified-tool> --mcdc --fail-under 100"
+  mutation:
+    active: true
+    threshold: 90               # test effectiveness evidence beyond structural coverage
+    # No built-in mutation tool for C: e.g. command: "mull-runner-17 --ide-reporter-show-killed build/tests"
   traceability:
     active: true
     bidirectional: true         # Requirement <-> Test <-> Code in both directions
+    baseline: required          # ISO 26262-8 §7: changes only against an approved baseline
   deliverables:
     active: true
+  reviews:
+    active: true
+    required: [spec, requirements, "architecture:2", usecases, testplan, implementation]   # blind approvals per stage ("stage:n" = n distinct reviewers)
+
+# --- 2b. Implementation Loop (see doc/prompts/06_27b_implementation.md) -------
+agent_loop:
+  max_iterations: 3              # fast-gate attempts per task before the model must escalate
+  fast_stages: [build, lint, test_freeze, tests]
 
 # --- 3. Deliverables ---------------------------------------------------------
 deliverables:

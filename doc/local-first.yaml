@@ -40,6 +40,10 @@ gate:
   security:
     active: true                 # cargo-deny (+ cargo-audit when installed)
     checks: [dependency_audit, license_scan, sources, secrets_scan]
+    # cargo-deny covers dependency_audit/license_scan/sources; secrets_scan needs a scanner, so the command covers all:
+    command: "cargo deny check && gitleaks detect --no-banner"
+  test_freeze:
+    active: true                 # tests are implemented + reviewed first, then frozen (aegis tests freeze)
   tests:
     active: true
     levels: [unit, integration, contract, ui_snapshot]
@@ -48,6 +52,9 @@ gate:
     metric: line                 # cargo-llvm-cov on stable; switch to `branch` with a nightly coverage job
     threshold: 75
     fail_below: true
+  mutation:
+    active: true
+    threshold: 70                # cargo-mutants; use `cargo mutants --in-diff` locally for fast feedback
   load_test:
     active: false                # performance budgets are verified by benchmark tests (TEST-PERF-*) instead
   traceability:
@@ -55,8 +62,17 @@ gate:
     bidirectional: false
     paths: [crates, apps, tests, xtask]
     milestones: []               # e.g. [M0, M1]: only these milestones need @implements yet (incremental V-model)
+    baseline: required           # approved doc/baseline.lock; changed REQs mark downstream links SUSPECT
   deliverables:
     active: true
+  reviews:
+    active: true
+    required: [spec, requirements, "architecture:2", implementation]   # blind approvals per stage ("stage:n" = n distinct reviewers)
+
+# --- 2b. Implementation Loop (see doc/prompts/06_27b_implementation.md) -------
+agent_loop:
+  max_iterations: 3              # fast-gate attempts per task before the model must escalate
+  fast_stages: [build, lint, test_freeze, tests]
 
 # --- 3. Deliverables ---------------------------------------------------------
 deliverables:

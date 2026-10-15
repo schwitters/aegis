@@ -1,15 +1,21 @@
+use crate::baseline;
 use crate::issue;
 use crate::profile::Profile;
+use crate::review;
+use crate::testfreeze;
 use crate::traceability::{self, Trace};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use colored::Colorize;
 use regex::Regex;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, PartialEq)]
 pub enum StageResult {
     Inactive,
+    /// Deselected via `--only` / `--skip`: the run is partial and not an acceptance
+    Skipped,
     Success,
     NotExecutable(String),
     Failed(i32),
@@ -19,6 +25,36 @@ pub struct GateRunner {
     pub root: PathBuf,
     pub profile: Profile,
     pub results: Vec<(String, StageResult)>,
+    pub only: Vec<String>,
+    pub skip: Vec<String>,
+}
+
+/// Execution order. Cheap deterministic checks first; reviews last (the final review happens on a green gate).
+pub const STAGES: [(&str, &str); 13] = [
+    ("Build", "build"),
+    ("Lint", "lint"),
+    ("Static Analysis", "static_analysis"),
+    ("Security Scan", "security"),
+    ("Test Freeze", "test_freeze"),
+    ("Tests", "tests"),
+    ("Coverage", "coverage"),
+    ("Mutation Testing", "mutation"),
+    ("Load Test", "load_test"),
+    ("Traceability", "traceability"),
+    ("Issues", "issues"),
+    ("Deliverables", "deliverables"),
+    ("Reviews", "reviews"),
+];
+
+/// Stages implemented by Aegis itself; a `command` override would bypass their checks.
+const INTERNAL_STAGES: [&str; 5] = ["test_freeze", "traceability", "issues", "deliverables", "reviews"];
+
+fn pass_if_zero(rc: Option<i32>) -> StageResult {
+    if rc == Some(0) {
+        StageResult::Success
+    } else {
+        StageResult::Failed(rc.unwrap_or(1))
+    }
 }
 
 fn command_exists(cmd: &str) -> bool {
@@ -49,7 +85,26 @@ impl GateRunner {
             root,
             profile,
             results: Vec::new(),
+            only: Vec::new(),
+            skip: Vec::new(),
         }
+    }
+
+    /// Restricts the run to a subset of stages. Unknown stage names are rejected.
+    pub fn with_selection(mut self, only: Vec<String>, skip: Vec<String>) -> Result<Self> {
+        for name in only.iter().chain(skip.iter()) {
+            if !STAGES.iter().any(|(_, k)| k == name) {
+                let known: Vec<&str> = STAGES.iter().map(|(_, k)| *k).collect();
+                bail!("Unknown gate stage `{}` (known: {})", name, known.join(", "));
+            }
+        }
+        self.only = only;
+        self.skip = skip;
+        Ok(self)
+    }
+
+    fn is_selected(&self, key: &str) -> bool {
+        (self.only.is_empty() || self.only.iter().any(|s| s == key)) && !self.skip.iter().any(|s| s == key)
     }
 
     fn run_cmd(&self, program: &str, args: &[&str]) -> Option<i32> {
@@ -66,6 +121,10 @@ impl GateRunner {
         cmd.status().ok().and_then(|s| s.code())
     }
 
+    fn lang(&self) -> &str {
+        self.profile.language.as_deref().unwrap_or("")
+    }
+
     pub fn run_all(&mut self) -> Result<bool> {
         let root_str = self.root.display().to_string();
         let prof_name = &self.profile.profile;
@@ -79,20 +138,7 @@ impl GateRunner {
         );
         println!();
 
-        let stages = [
-            ("Build", "build"),
-            ("Lint", "lint"),
-            ("Static Analysis", "static_analysis"),
-            ("Security Scan", "security"),
-            ("Tests", "tests"),
-            ("Coverage", "coverage"),
-            ("Load Test", "load_test"),
-            ("Traceability", "traceability"),
-            ("Issues", "issues"),
-            ("Deliverables", "deliverables"),
-        ];
-
-        for (display_name, key) in stages {
+        for (display_name, key) in STAGES {
             let res = self.execute_stage(display_name, key)?;
             let failed = matches!(res, StageResult::NotExecutable(_) | StageResult::Failed(_));
             self.results.push((display_name.to_string(), res));
@@ -108,6 +154,10 @@ impl GateRunner {
     }
 
     fn execute_stage(&self, display_name: &str, key: &str) -> Result<StageResult> {
+        if !self.is_selected(key) {
+            return Ok(StageResult::Skipped);
+        }
+
         // "issues" is active if doc/issues/ exists or is explicitly set in profile
         if key == "issues" {
             let issues_dir = self.root.join("doc/issues");
@@ -127,18 +177,16 @@ impl GateRunner {
 
         println!("{}", format!("▶ {}", display_name).bold());
 
-        let res = match key {
-            "build" => self.stage_build(),
-            "lint" => self.stage_lint(),
-            "static_analysis" => self.stage_static(),
-            "security" => self.stage_security(),
-            "tests" => self.stage_tests(),
-            "coverage" => self.stage_coverage(),
-            "load_test" => self.stage_load(),
-            "traceability" => self.stage_traceability(),
-            "issues" => self.stage_issues(),
-            "deliverables" => self.stage_deliverables(),
-            _ => StageResult::NotExecutable(format!("Unknown stage: {}", key)),
+        let override_cmd = self.profile.get_stage_config(key).and_then(|c| c.command.clone());
+        let res = match override_cmd {
+            Some(_) if INTERNAL_STAGES.contains(&key) => {
+                StageResult::NotExecutable(format!("`command` override is not allowed for internal stage {}", key))
+            }
+            Some(cmd) => {
+                println!("    $ {}", cmd);
+                pass_if_zero(self.run_bash(&cmd))
+            }
+            None => self.run_builtin(key),
         };
 
         match &res {
@@ -159,10 +207,29 @@ impl GateRunner {
                 println!("  {}", format!("✘ {} (rc={})", display_name, rc).red());
                 println!();
             }
-            StageResult::Inactive => {}
+            StageResult::Inactive | StageResult::Skipped => {}
         }
 
         Ok(res)
+    }
+
+    fn run_builtin(&self, key: &str) -> StageResult {
+        match key {
+            "build" => self.stage_build(),
+            "lint" => self.stage_lint(),
+            "static_analysis" => self.stage_static(),
+            "security" => self.stage_security(),
+            "test_freeze" => self.stage_test_freeze(),
+            "tests" => self.stage_tests(),
+            "coverage" => self.stage_coverage(),
+            "mutation" => self.stage_mutation(),
+            "load_test" => self.stage_load(),
+            "traceability" => self.stage_traceability(),
+            "issues" => self.stage_issues(),
+            "deliverables" => self.stage_deliverables(),
+            "reviews" => self.stage_reviews(),
+            _ => StageResult::NotExecutable(format!("Unknown stage: {}", key)),
+        }
     }
 
     fn stage_build(&self) -> StageResult {
@@ -303,28 +370,74 @@ impl GateRunner {
     }
 
     fn stage_security(&self) -> StageResult {
-        let mut executed = false;
-        if command_exists("pip-audit") {
-            let rc = self.run_bash("pip-audit 2>/dev/null");
-            if rc != Some(0) { return StageResult::Failed(rc.unwrap_or(1)); }
-            executed = true;
-        }
-        if command_exists("bandit") && self.root.join("src").exists() {
-            let rc = self.run_bash("bandit -q -r src/");
-            if rc != Some(0) { return StageResult::Failed(rc.unwrap_or(1)); }
-            executed = true;
-        }
-        if command_exists("cargo-audit") && self.root.join("Cargo.lock").exists() {
-            let rc = self.run_bash("cargo audit");
-            if rc != Some(0) { return StageResult::Failed(rc.unwrap_or(1)); }
-            executed = true;
+        let checks = self
+            .profile
+            .get_stage_config("security")
+            .map(|c| c.checks.clone())
+            .unwrap_or_default();
+        let mut covered: Vec<&str> = Vec::new();
+
+        match self.lang() {
+            "rust" => {
+                if !self.root.join("Cargo.lock").exists() {
+                    return StageResult::NotExecutable("Cargo.lock missing (dependency audit needs a lock file)".to_string());
+                }
+                if self.root.join("deny.toml").exists() {
+                    if !command_exists("cargo-deny") {
+                        return StageResult::NotExecutable("deny.toml present but cargo-deny is not installed".to_string());
+                    }
+                    let rc = self.run_bash("cargo deny check");
+                    if rc != Some(0) {
+                        return StageResult::Failed(rc.unwrap_or(1));
+                    }
+                    covered.extend(["dependency_audit", "license_scan", "sources", "bans"]);
+                }
+                if command_exists("cargo-audit") {
+                    let rc = self.run_bash("cargo audit");
+                    if rc != Some(0) {
+                        return StageResult::Failed(rc.unwrap_or(1));
+                    }
+                    covered.push("dependency_audit");
+                }
+            }
+            "python" => {
+                if command_exists("pip-audit") {
+                    let rc = self.run_bash("pip-audit");
+                    if rc != Some(0) {
+                        return StageResult::Failed(rc.unwrap_or(1));
+                    }
+                    covered.push("dependency_audit");
+                }
+                if command_exists("bandit") && self.root.join("src").exists() {
+                    let rc = self.run_bash("bandit -q -r src/");
+                    if rc != Some(0) {
+                        return StageResult::Failed(rc.unwrap_or(1));
+                    }
+                    covered.push("sast");
+                }
+            }
+            _ => {}
         }
 
-        if executed {
-            StageResult::Success
-        } else {
-            StageResult::NotExecutable("No matching security scanners (pip-audit, bandit, cargo-audit) found".to_string())
+        if covered.is_empty() {
+            return StageResult::NotExecutable(format!(
+                "no built-in security scanner for language `{}` available; configure gate.security.command",
+                self.lang()
+            ));
         }
+        // Fail closed: every check the profile promises must actually have run.
+        let uncovered: Vec<&str> = checks
+            .iter()
+            .map(|c| c.as_str())
+            .filter(|c| !covered.contains(c))
+            .collect();
+        if !uncovered.is_empty() {
+            return StageResult::NotExecutable(format!(
+                "checks without a built-in scanner: {}; configure gate.security.command to cover all checks",
+                uncovered.join(", ")
+            ));
+        }
+        StageResult::Success
     }
 
     fn stage_tests(&self) -> StageResult {
@@ -375,41 +488,114 @@ impl GateRunner {
     fn stage_coverage(&self) -> StageResult {
         let cov_cfg = self.profile.get_stage_config("coverage");
         let metric = cov_cfg.and_then(|c| c.metric.as_deref()).unwrap_or("statement");
-        let threshold = cov_cfg.and_then(|c| c.threshold).unwrap_or(0);
+        let Some(threshold) = cov_cfg.and_then(|c| c.threshold) else {
+            return StageResult::NotExecutable("gate.coverage.threshold not set".to_string());
+        };
 
         println!("    required: {} >= {}%", metric, threshold);
 
         if metric == "mcdc" {
             println!("    MC/DC requires a qualified, project-specific coverage adapter.");
-            return StageResult::NotExecutable("MC/DC adapter not configured".to_string());
+            return StageResult::NotExecutable("MC/DC adapter not configured (gate.coverage.command)".to_string());
         }
 
-        let lang = self.profile.language.as_deref().unwrap_or("");
-        if lang == "python" && command_exists("pytest") && command_exists("coverage") {
-            let branch_flag = if metric == "branch" { "--branch" } else { "" };
-            let cmd_str = format!(
-                "coverage run {} -m pytest -q >/dev/null 2>&1 && coverage report --fail-under={}",
-                branch_flag, threshold
-            );
-            let rc = self.run_bash(&cmd_str);
-            if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
-        } else {
-            StageResult::NotExecutable(format!("Coverage tool for {} ({}) missing", lang, metric))
+        match (self.lang(), metric) {
+            ("python", "statement" | "line" | "branch") if command_exists("pytest") && command_exists("coverage") => {
+                let branch_flag = if metric == "branch" { "--branch" } else { "" };
+                let cmd_str = format!(
+                    "coverage run {} -m pytest -q >/dev/null 2>&1 && coverage report --fail-under={}",
+                    branch_flag, threshold
+                );
+                pass_if_zero(self.run_bash(&cmd_str))
+            }
+            ("rust", "statement" | "line") if command_exists("cargo-llvm-cov") => pass_if_zero(self.run_bash(&format!(
+                "cargo llvm-cov --all-targets --all-features --fail-under-lines {}",
+                threshold
+            ))),
+            (lang, _) => StageResult::NotExecutable(format!(
+                "no built-in {} coverage for `{}` available; configure gate.coverage.command",
+                metric, lang
+            )),
         }
     }
 
     fn stage_load(&self) -> StageResult {
-        if command_exists("k6") || command_exists("locust") {
-            println!("    (Load test runner available)");
-            StageResult::Success
-        } else {
-            StageResult::NotExecutable("Neither k6 nor locust found".to_string())
+        // Having a load-test tool installed proves nothing; the scenario and its thresholds are project specific.
+        StageResult::NotExecutable(
+            "no built-in load test; configure gate.load_test.command (e.g. `k6 run --quiet load/slo.js`)".to_string(),
+        )
+    }
+
+    fn stage_mutation(&self) -> StageResult {
+        let Some(threshold) = self.profile.get_stage_config("mutation").and_then(|c| c.threshold) else {
+            return StageResult::NotExecutable("gate.mutation.threshold (minimum mutation score in %) not set".to_string());
+        };
+        println!("    required: mutation score >= {}%", threshold);
+
+        match self.lang() {
+            "rust" => {
+                if !command_exists("cargo-mutants") {
+                    return StageResult::NotExecutable("cargo-mutants missing (cargo install cargo-mutants)".to_string());
+                }
+                // Exit codes 2 (missed mutants) and 3 (timeouts) still produce a scoreable report.
+                let rc = self.run_bash("cargo mutants --no-shuffle --output target/aegis-mutants");
+                if !matches!(rc, Some(0) | Some(2) | Some(3)) {
+                    return StageResult::Failed(rc.unwrap_or(1));
+                }
+                let report = self.root.join("target/aegis-mutants/mutants.out/outcomes.json");
+                match mutation_score(&report) {
+                    Ok((_, 0)) => StageResult::NotExecutable("cargo-mutants produced no viable mutants".to_string()),
+                    Ok((caught, total)) => {
+                        let score = caught * 100 / total;
+                        println!("    mutation score: {}% ({} of {} viable mutants caught)", score, caught, total);
+                        if score >= u64::from(threshold) {
+                            StageResult::Success
+                        } else {
+                            println!("    {}", "see target/aegis-mutants/mutants.out/missed.txt".red());
+                            StageResult::Failed(1)
+                        }
+                    }
+                    Err(e) => StageResult::NotExecutable(e),
+                }
+            }
+            "java" => {
+                let mvn = if self.root.join("mvnw").exists() {
+                    "./mvnw"
+                } else if command_exists("mvn") && self.root.join("pom.xml").exists() {
+                    "mvn"
+                } else {
+                    return StageResult::NotExecutable("Maven missing (PIT mutation testing)".to_string());
+                };
+                pass_if_zero(self.run_bash(&format!(
+                    "{} -q org.pitest:pitest-maven:mutationCoverage -DmutationThreshold={}",
+                    mvn, threshold
+                )))
+            }
+            lang => StageResult::NotExecutable(format!(
+                "no built-in mutation testing for `{}`; configure gate.mutation.command",
+                lang
+            )),
+        }
+    }
+
+    fn stage_test_freeze(&self) -> StageResult {
+        let doc_dir = self.root.join("doc");
+        let src_dirs = self.profile.source_paths(&self.root);
+        match testfreeze::verify(&self.root, &doc_dir, &src_dirs) {
+            Ok(problems) if problems.is_empty() => StageResult::Success,
+            Ok(problems) => {
+                for p in &problems {
+                    println!("    {}", p.red());
+                }
+                StageResult::Failed(1)
+            }
+            Err(e) => StageResult::NotExecutable(format!("{:#}", e)),
         }
     }
 
     fn stage_traceability(&self) -> StageResult {
         let doc_dir = self.root.join("doc");
-        let src_dirs = vec![self.root.join("src"), self.root.join("tests")];
+        let src_dirs = self.profile.source_paths(&self.root);
 
         let mut trace = Trace::default();
         if let Err(e) = traceability::collect_docs(&doc_dir, &mut trace) {
@@ -420,13 +606,60 @@ impl GateRunner {
         }
 
         let (rows, _, _) = traceability::build_rows(&trace);
-        let problems = traceability::find_problems(&trace, &rows);
+        let mut problems = traceability::find_problems(&trace, &rows);
+
+        let baseline_required = self
+            .profile
+            .get_stage_config("traceability")
+            .and_then(|c| c.baseline.as_deref())
+            == Some("required");
+        match baseline::load(&doc_dir) {
+            Ok(Some(b)) => match baseline::current(&self.root, &trace) {
+                Ok(now) => problems.extend(baseline::check(&trace, &baseline::diff(&b, &now))),
+                Err(e) => problems.push(format!("INVALID  baseline: {:#}", e)),
+            },
+            Ok(None) if baseline_required => problems.push(
+                "UNREVIEWED no approved baseline (doc/baseline.lock) — required by profile; \
+                 review the specification, then run `aegis baseline --approve <name>`"
+                    .to_string(),
+            ),
+            Ok(None) => {}
+            Err(e) => problems.push(format!("INVALID  baseline: {:#}", e)),
+        }
 
         // Write matrix to doc/traceability.md
         let out_file = doc_dir.join("traceability.md");
         let report_md = traceability::render_report_markdown(&rows, &problems);
         let _ = std::fs::write(&out_file, report_md);
 
+        if problems.is_empty() {
+            StageResult::Success
+        } else {
+            for p in &problems {
+                println!("    {}", p.red());
+            }
+            StageResult::Failed(1)
+        }
+    }
+
+    fn stage_reviews(&self) -> StageResult {
+        let doc_dir = self.root.join("doc");
+        let reviews = match review::collect_reviews(&doc_dir) {
+            Ok(r) => r,
+            Err(e) => return StageResult::NotExecutable(format!("{:#}", e)),
+        };
+        let issue_ids: BTreeSet<String> = match issue::collect_issues(&doc_dir) {
+            Ok(is) => is.into_iter().map(|i| i.meta.id).collect(),
+            Err(e) => return StageResult::NotExecutable(format!("{:#}", e)),
+        };
+        let required = self
+            .profile
+            .get_stage_config("reviews")
+            .map(|c| c.required.clone())
+            .unwrap_or_default();
+
+        let problems = review::check(&reviews, &issue_ids, &required);
+        println!("    ({} review record(s))", reviews.len());
         if problems.is_empty() {
             StageResult::Success
         } else {
@@ -528,6 +761,9 @@ impl GateRunner {
                 StageResult::Inactive => {
                     println!("  ∅  {} (profile-inactive)", name);
                 }
+                StageResult::Skipped => {
+                    println!("  –  {} (skipped: not selected)", name);
+                }
                 StageResult::Success => {
                     println!("  ✔  {}", name);
                 }
@@ -540,10 +776,46 @@ impl GateRunner {
             }
         }
 
-        if all_passed {
+        let skipped = self.results.iter().filter(|(_, r)| *r == StageResult::Skipped).count();
+        if all_passed && skipped > 0 {
+            println!(
+                "{}",
+                format!("✔ PARTIAL GATE GREEN — {} stage(s) skipped; this is not an acceptance", skipped)
+                    .yellow()
+                    .bold()
+            );
+        } else if all_passed {
             println!("{}", "✔ GATE GREEN — Accepted".green().bold());
         } else {
             println!("{}", "✘ GATE RED — Rejected".red().bold());
         }
     }
+}
+
+/// Mutation score input from a cargo-mutants `outcomes.json`: (caught incl. timeouts, viable mutants).
+pub fn mutation_score(path: &std::path::Path) -> std::result::Result<(u64, u64), String> {
+    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("cannot parse {}: {}", path.display(), e))?;
+    let num = |k: &str| v.get(k).and_then(|x| x.as_u64());
+    if let (Some(caught), Some(missed)) = (num("caught"), num("missed")) {
+        let timeout = num("timeout").unwrap_or(0);
+        return Ok((caught + timeout, caught + missed + timeout));
+    }
+    let outcomes = v
+        .get("outcomes")
+        .and_then(|o| o.as_array())
+        .ok_or_else(|| format!("{}: neither summary counts nor `outcomes` found", path.display()))?;
+    let (mut caught, mut total) = (0, 0);
+    for o in outcomes {
+        match o.get("summary").and_then(|s| s.as_str()) {
+            Some("CaughtMutant") | Some("Timeout") => {
+                caught += 1;
+                total += 1;
+            }
+            Some("MissedMutant") => total += 1,
+            _ => {}
+        }
+    }
+    Ok((caught, total))
 }

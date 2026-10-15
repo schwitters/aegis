@@ -193,7 +193,66 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     out.push_str("   `@verifies TEST-XXX`\n\n");
     out.push_str("> [!CAUTION]\n> `aegis gate` will fail automatically if any requirement has missing `@implements` annotations.\n\n");
 
+    out.push_str("3. **Frozen Tests (read-only for you):**\n");
+    out.push_str("   The test files listed in `doc/testplan/tests.lock` were written and reviewed before this task and are frozen.\n");
+    out.push_str("   You MUST NOT modify, delete, rename, skip or `#[ignore]` them, and you MUST NOT edit `doc/testplan/tests.lock`,\n");
+    out.push_str("   `doc/baseline.lock` or anything under `doc/`. Make the frozen tests pass by changing production code only.\n");
+    out.push_str("   Never put production code (`@implements`) into a file that contains `@verifies` tests.\n\n");
+
     out.push_str("---\n\n");
+
+    // Section 3b: Implementation loop protocol
+    let agent_loop = profile.as_ref().map(|p| p.agent_loop()).unwrap_or_default();
+    let prof_arg = prof_file
+        .strip_prefix(&opts.root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| prof_file.display().to_string());
+    out.push_str("## 3b. Implementation Loop Protocol\n\n");
+    out.push_str("Work on **one task at a time**. A task is one requirement (`REQ-xxx`) together with the frozen tests that verify it.\n");
+    out.push_str("For each task:\n\n");
+    out.push_str("1. Read the requirement, its architecture element (`ARCH-xxx`) and the frozen tests that verify it.\n");
+    out.push_str("2. Implement the smallest change that satisfies the requirement; annotate it with `@implements REQ-xxx`.\n");
+    out.push_str("3. Run the fast gate and read its full output:\n\n");
+    out.push_str(&format!(
+        "   ```bash\n   aegis gate --profile {} --only {}\n   ```\n\n",
+        prof_arg,
+        agent_loop.fast_stages.join(",")
+    ));
+    out.push_str(&format!(
+        "4. If it is red, fix the root cause and repeat step 3 — at most **{} attempts** per task.\n",
+        agent_loop.max_iterations
+    ));
+    out.push_str("5. If it is still red after the last attempt, or a requirement is ambiguous or contradicts a frozen test, **stop** and\n");
+    out.push_str("   write `ESCALATION-<REQ-ID>.md` with: the task, every attempt (change + gate output excerpt), your root-cause\n");
+    out.push_str("   hypothesis, and the specification question that blocks you. Do not guess, do not weaken checks, do not\n");
+    out.push_str("   add lint suppressions to get green.\n");
+    out.push_str("6. When the fast gate is green, continue with the next task. Do not start the next task while the current one is red.\n\n");
+
+    out.push_str("---\n\n");
+
+    // Section 3c: Architecture
+    let arch_dir = doc_dir.join("architecture");
+    if arch_dir.exists() {
+        let mut entries: Vec<PathBuf> = WalkDir::new(&arch_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .map(|e| e.into_path())
+            .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md"))
+            .collect();
+        entries.sort();
+        if !entries.is_empty() {
+            out.push_str("## 3c. Architecture (`doc/architecture/`)\n\n");
+            for path in entries {
+                let content = fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?;
+                let rel = path.strip_prefix(&opts.root).unwrap_or(&path);
+                out.push_str(&format!("### Artifact: {}\n\n", rel.display()));
+                out.push_str(content.trim());
+                out.push_str("\n\n");
+            }
+            out.push_str("---\n\n");
+        }
+    }
 
     // Section 4: Full Requirements Breakdown
     out.push_str("## 4. Requirements Specification (`doc/requirements/`)\n\n");
@@ -261,9 +320,10 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
     out.push_str("## 6. Definition of Done for Implementation Model\n\n");
     out.push_str("Before considering your task complete, verify that:\n");
     out.push_str("- [ ] Code compiles cleanly with zero warnings.\n");
-    out.push_str("- [ ] All unit and integration tests are implemented and pass.\n");
+    out.push_str("- [ ] The fast gate (`aegis gate --only ...`, see 3b) is green for every task.\n");
+    out.push_str("- [ ] All frozen tests pass and none of them was modified (`aegis tests verify`).\n");
     out.push_str("- [ ] Every requirement has at least one `@implements REQ-xxx` annotation.\n");
-    out.push_str("- [ ] Every test case has at least one `@verifies TEST-xxx` annotation.\n");
+    out.push_str("- [ ] Every task that could not be completed has an `ESCALATION-<REQ-ID>.md` report.\n");
     out.push_str("- [ ] Zero hardcoded secrets, zero unhandled errors, zero undefined behaviors.\n");
 
     if let Some(out_path) = opts.out {

@@ -21,6 +21,8 @@ const RULESET_JAVA_GOOGLE: &str = include_str!("../../doc/rules/java-google-styl
 pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     let doc_dir = root.join("doc");
     let req_dir = doc_dir.join("requirements");
+    let arch_dir = doc_dir.join("architecture");
+    let reviews_dir = doc_dir.join("reviews");
     let uc_dir = doc_dir.join("usecases");
     let test_dir = doc_dir.join("testplan");
     let issues_dir = doc_dir.join("issues");
@@ -28,6 +30,8 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     let rules_dir = doc_dir.join("rules");
 
     fs::create_dir_all(&req_dir).context("Failed to create doc/requirements")?;
+    fs::create_dir_all(&arch_dir).context("Failed to create doc/architecture")?;
+    fs::create_dir_all(&reviews_dir).context("Failed to create doc/reviews")?;
     fs::create_dir_all(&uc_dir).context("Failed to create doc/usecases")?;
     fs::create_dir_all(&test_dir).context("Failed to create doc/testplan")?;
     fs::create_dir_all(&issues_dir).context("Failed to create doc/issues")?;
@@ -128,15 +132,30 @@ gate:
     active: true
   tests:
     active: true
+  security:
+    active: true
+    checks: [dependency_audit]
+  test_freeze:
+    active: true
   coverage:
     active: true
     metric: mcdc
     threshold: 100
+  mutation:
+    active: true
+    threshold: 90
   traceability:
     active: true
     bidirectional: true
+    baseline: required
   deliverables:
     active: true
+  reviews:
+    active: true
+    required: [spec, requirements, "architecture:2", testplan, implementation]
+agent_loop:
+  max_iterations: 3
+  fast_stages: [build, lint, test_freeze, tests]
 
 coding_constraints:
   - Zero dynamic memory allocation at runtime.
@@ -179,16 +198,29 @@ gate:
     active: true
   security:
     active: true
+    checks: [dependency_audit]
+  test_freeze:
+    active: true
   tests:
     active: true
   coverage:
     active: true
-    metric: branch
+    metric: line
     threshold: 80
+  mutation:
+    active: true
+    threshold: 70
   traceability:
     active: true
+    baseline: required
   deliverables:
     active: true
+  reviews:
+    active: true
+    required: [spec, requirements, "architecture:2", implementation]
+agent_loop:
+  max_iterations: 3
+  fast_stages: [build, lint, test_freeze, tests]
 
 coding_constraints:
   - Explicit error handling with strongly typed domain errors.
@@ -289,7 +321,8 @@ iso25010: functional_suitability
 <How this requirement is verified by automated tests>
 ```
 
-Also extract the corresponding Use Cases in `doc/usecases/UC-XXX.md` with `implements: [REQ-XXX]`.
+Also extract the corresponding Use Cases in `doc/usecases/UC-XXX.md` with `implements: [REQ-XXX]`, and the
+architecture elements (components) in `doc/architecture/ARCH-XXX.md` with `satisfies: [REQ-XXX]`.
 ```
 "#,
                 lang_upper = opts.lang.to_uppercase()
@@ -300,13 +333,11 @@ Also extract the corresponding Use Cases in `doc/usecases/UC-XXX.md` with `imple
         let baseline_req = req_dir.join("REQ-001.md");
         if !baseline_req.exists() {
             let req_content = r#"---
-```yaml
 id: REQ-001
 title: Baseline System Core Initialization
 status: active
 type: functional
 iso25010: functional_suitability
-```
 ---
 
 ## Description
@@ -324,11 +355,9 @@ Required for proper baseline execution and startup integrity.
         let baseline_uc = uc_dir.join("UC-001.md");
         if !baseline_uc.exists() {
             let uc_content = r#"---
-```yaml
 id: UC-001
 title: System Startup Sequence
 implements: [REQ-001]
-```
 ---
 
 ## Actors
@@ -340,6 +369,26 @@ implements: [REQ-001]
 3. Start worker dispatchers.
 "#;
             fs::write(&baseline_uc, uc_content)?;
+        }
+
+        let baseline_arch = arch_dir.join("ARCH-001.md");
+        if !baseline_arch.exists() {
+            let arch_content = r#"---
+id: ARCH-001
+title: Core Runtime & Startup
+satisfies: [REQ-001]
+---
+
+## Responsibility
+Owns configuration loading, component wiring and the startup sequence.
+
+## Interfaces
+- Public entry point and configuration schema (to be extracted from the existing code).
+
+## Integration Verification
+An integration test (`TEST-xxx` with `verifies: [ARCH-001]`) starts the system with a valid configuration.
+"#;
+            fs::write(&baseline_arch, arch_content)?;
         }
     } else {
         let spec_path = doc_dir.join("001_initial_spec.md");
@@ -385,16 +434,22 @@ Initial thoughts on technology stack, components, and protocol boundaries.
         println!();
         println!("{}", "Brownfield Migration Artifacts Created:".bold());
         println!("  1. Prompt template: {}", doc_dir.join("REVERSE_SPEC_EXTRACTION_PROMPT.md").display().to_string().cyan());
-        println!("  2. Baseline REQ/UC: {} & {}", req_dir.join("REQ-001.md").display(), uc_dir.join("UC-001.md").display());
+        println!(
+            "  2. Baseline REQ/UC/ARCH: {}, {} & {}",
+            req_dir.join("REQ-001.md").display(),
+            uc_dir.join("UC-001.md").display(),
+            arch_dir.join("ARCH-001.md").display()
+        );
         println!("  3. Next step: Run prompt in Frontier model, tag @implements in code, then run: ./gate.sh");
     } else {
         println!();
         println!("{}", "Greenfield Next Steps:".bold());
         println!("  1. Refine specification in {}", doc_dir.join("001_initial_spec.md").display().to_string().cyan());
-        println!("  2. Run blind review with Frontier Model B");
-        println!("  3. Derive requirements in doc/requirements/ and test plan in doc/testplan/");
-        println!("  4. Synthesize instructions: ./gate.sh / aegis instructions --out AGENT_INSTRUCTIONS.md");
-        println!("  5. Implement with 27B model (@implements REQ-xxx) and run: ./gate.sh");
+        println!("  2. Run blind review with Frontier Model B; record it: aegis review create --stage spec ...");
+        println!("  3. Derive requirements, architecture (ARCH-xxx), use cases and test plan; review; aegis baseline --approve <you>");
+        println!("  4. Implement and review the tests, then freeze them: aegis tests freeze");
+        println!("  5. Synthesize instructions: aegis instructions --out AGENT_INSTRUCTIONS.md");
+        println!("  6. Implementation loop (fast gate), full gate, final review, acceptance gate: ./gate.sh");
     }
 
     Ok(())

@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use aegis::baseline;
 use aegis::gate::GateRunner;
 use aegis::impact;
 use aegis::issue::{self, CreateIssueOptions};
 use aegis::profile::Profile;
+use aegis::review::{self, CreateReviewOptions};
+use aegis::testfreeze;
 use aegis::traceability::{self, Trace};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -45,6 +48,10 @@ enum Commands {
         target: Vec<String>,
         #[arg(long)]
         code_file: Option<String>,
+        /// Seed the analysis with every artifact changed since the approved baseline (doc/baseline.lock)
+        #[arg(long)]
+        changed: bool,
+        /// bug | feature | wish | concept (spec or architecture assumption changes)
         #[arg(long, default_value = "unknown")]
         kind: String,
         #[arg(long)]
@@ -56,6 +63,32 @@ enum Commands {
         profile: String,
         #[arg(long, default_value = ".")]
         root: String,
+        /// Run only these stages (comma separated), e.g. the agent's inner loop: build,lint,test_freeze,tests
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Skip these stages (comma separated). A partial run is never an acceptance.
+        #[arg(long, value_delimiter = ',')]
+        skip: Vec<String>,
+    },
+    /// Approved baseline of all specification artifacts (suspect-link detection)
+    Baseline {
+        /// Record the current state as approved by <name>. Without it, only the pending changes are shown.
+        #[arg(long)]
+        approve: Option<String>,
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+    },
+    /// Frozen test files (tests are written and reviewed before the implementation)
+    Tests {
+        #[command(subcommand)]
+        cmd: TestsCommands,
+    },
+    /// Review records with findings and dispositions (doc/reviews/)
+    Review {
+        #[command(subcommand)]
+        cmd: ReviewCommands,
     },
     /// Inspect domain profiles
     Profile {
@@ -86,6 +119,75 @@ enum Commands {
         out: Option<String>,
         #[arg(long, default_value = ".")]
         root: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TestsCommands {
+    /// Hash every file with @verifies annotations into doc/testplan/tests.lock
+    Freeze {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+        #[arg(long, num_args = 1.., default_values_t = vec!["src".to_string(), "tests".to_string()])]
+        src: Vec<String>,
+        /// Take the source roots from the profile (gate.traceability.paths) instead of --src
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Check that frozen test files are unchanged and that no test file is unfrozen
+    Verify {
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+        #[arg(long, num_args = 1.., default_values_t = vec!["src".to_string(), "tests".to_string()])]
+        src: Vec<String>,
+        /// Take the source roots from the profile (gate.traceability.paths) instead of --src
+        #[arg(long)]
+        profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReviewCommands {
+    /// Create a review record skeleton with the next free ID (REVIEW-0001.md)
+    Create {
+        /// spec | requirements | architecture | usecases | testplan | implementation
+        #[arg(long)]
+        stage: String,
+        #[arg(long, num_args = 1..)]
+        artifact: Vec<String>,
+        /// Reviewing model / person (must differ from the author)
+        #[arg(long)]
+        reviewer: String,
+        /// Authoring model / person
+        #[arg(long)]
+        author: Option<String>,
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+    },
+    /// List review records with open findings
+    List {
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
+    },
+    /// Validate all review records (same check as the gate stage `reviews`)
+    Check {
+        /// Required blind approvals, e.g. --required spec architecture:2
+        #[arg(long, num_args = 0..)]
+        required: Vec<String>,
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[arg(long, default_value = "doc")]
+        doc: String,
     },
 }
 
@@ -170,6 +272,17 @@ enum IssueCommands {
     },
 }
 
+/// Source roots from the profile (`gate.traceability.paths`) when given, else from `--src`.
+fn source_roots(root: &Path, src: &[String], profile: Option<&str>) -> Result<Vec<PathBuf>> {
+    match profile {
+        Some(p) => {
+            let path = if Path::new(p).is_absolute() { PathBuf::from(p) } else { root.join(p) };
+            Ok(Profile::load_from_file(&path)?.source_paths(root))
+        }
+        None => Ok(src.iter().map(|s| root.join(s)).collect()),
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -190,7 +303,11 @@ fn main() -> Result<()> {
             traceability::collect_code(&src_paths, &mut trace)?;
 
             let (rows, _, _) = traceability::build_rows(&trace);
-            let problems = traceability::find_problems(&trace, &rows);
+            let mut problems = traceability::find_problems(&trace, &rows);
+            if let Some(b) = baseline::load(&doc_path)? {
+                let now = baseline::current(&root_path, &trace)?;
+                problems.extend(baseline::check(&trace, &baseline::diff(&b, &now)));
+            }
 
             if json {
                 let report = traceability::TraceReport {
@@ -222,11 +339,12 @@ fn main() -> Result<()> {
             src,
             target,
             code_file,
+            changed,
             kind,
             json,
         } => {
-            if target.is_empty() && code_file.is_none() {
-                eprintln!("Please specify at least --target <ID...> or --code-file <path>.");
+            if target.is_empty() && code_file.is_none() && !changed {
+                eprintln!("Please specify at least --target <ID...>, --code-file <path> or --changed.");
                 exit(2);
             }
 
@@ -237,6 +355,15 @@ fn main() -> Result<()> {
             let mut trace = Trace::default();
             traceability::collect_docs(&doc_path, &mut trace)?;
             traceability::collect_code(&src_paths, &mut trace)?;
+
+            let mut target = target;
+            if changed {
+                let b = baseline::load(&doc_path)?
+                    .context("--changed needs an approved baseline (doc/baseline.lock); run `aegis baseline --approve`")?;
+                let d = baseline::diff(&b, &baseline::current(&root_path, &trace)?);
+                target.extend(d.unapproved());
+                target.extend(d.removed);
+            }
 
             let root_str = format!("{}/", root_path.display());
             let blast = impact::compute_impact(&trace, &target, code_file.as_deref(), &root_str);
@@ -255,7 +382,12 @@ fn main() -> Result<()> {
                 print!("{}", text);
             }
         }
-        Commands::Gate { profile, root } => {
+        Commands::Gate {
+            profile,
+            root,
+            only,
+            skip,
+        } => {
             let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
             let profile_path = if Path::new(&profile).is_absolute() {
                 PathBuf::from(&profile)
@@ -266,13 +398,146 @@ fn main() -> Result<()> {
             let prof = Profile::load_from_file(&profile_path)
                 .with_context(|| format!("Could not load profile: {}", profile_path.display()))?;
 
-            let mut runner = GateRunner::new(root_path, prof);
+            let mut runner = GateRunner::new(root_path, prof).with_selection(only, skip)?;
             let passed = runner.run_all()?;
 
             if !passed {
                 exit(1);
             }
         }
+        Commands::Baseline { approve, root, doc } => {
+            let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+            let doc_path = root_path.join(doc);
+
+            let mut trace = Trace::default();
+            traceability::collect_docs(&doc_path, &mut trace)?;
+            let (rows, _, _) = traceability::build_rows(&trace);
+            let blocking = baseline::blocking_for_approval(&traceability::find_problems(&trace, &rows));
+
+            let now = baseline::current(&root_path, &trace)?;
+            let previous = baseline::load(&doc_path)?;
+            let d = match &previous {
+                Some(b) => baseline::diff(b, &now),
+                None => baseline::BaselineDiff {
+                    added: now.keys().cloned().collect(),
+                    ..Default::default()
+                },
+            };
+
+            if d.is_empty() {
+                println!("✔ Baseline is current ({} artifacts).", now.len());
+                return Ok(());
+            }
+            for (label, ids) in [("new", &d.added), ("changed", &d.changed), ("removed", &d.removed)] {
+                for id in ids {
+                    println!("  {:<8} {}", label, id);
+                }
+            }
+            if previous.is_some() {
+                for p in baseline::check(&trace, &d).iter().filter(|p| p.starts_with("SUSPECT")) {
+                    println!("  {}", p);
+                }
+            }
+
+            match approve {
+                None => {
+                    println!();
+                    println!("Review the items above (and their SUSPECT links), then run: aegis baseline --approve <name>");
+                    exit(1);
+                }
+                Some(name) => {
+                    if !blocking.is_empty() {
+                        for p in &blocking {
+                            eprintln!("  {}", p);
+                        }
+                        eprintln!("✘ Refusing to baseline a structurally broken specification.");
+                        exit(1);
+                    }
+                    let b = baseline::Baseline {
+                        approved_by: Some(name),
+                        approved_at: Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()),
+                        artifacts: now,
+                    };
+                    let path = baseline::write(&doc_path, &b)?;
+                    println!("✔ Baseline approved: {}", path.strip_prefix(&root_path).unwrap_or(&path).display());
+                }
+            }
+        }
+        Commands::Tests { cmd } => match cmd {
+            TestsCommands::Freeze { root, doc, src, profile } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let src_paths = source_roots(&root_path, &src, profile.as_deref())?;
+                let (path, n) = testfreeze::freeze(&root_path, &root_path.join(doc), &src_paths)?;
+                println!(
+                    "✔ Froze {} test file(s): {}",
+                    n,
+                    path.strip_prefix(&root_path).unwrap_or(&path).display()
+                );
+            }
+            TestsCommands::Verify { root, doc, src, profile } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let src_paths = source_roots(&root_path, &src, profile.as_deref())?;
+                let problems = testfreeze::verify(&root_path, &root_path.join(doc), &src_paths)?;
+                if problems.is_empty() {
+                    println!("✔ All test files frozen and unchanged.");
+                } else {
+                    for p in &problems {
+                        println!("{}", p);
+                    }
+                    exit(1);
+                }
+            }
+        },
+        Commands::Review { cmd } => match cmd {
+            ReviewCommands::Create {
+                stage,
+                artifact,
+                reviewer,
+                author,
+                root,
+                doc,
+            } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let (id, path) = review::create_review(
+                    &root_path.join(doc),
+                    CreateReviewOptions {
+                        stage,
+                        artifacts: artifact,
+                        reviewer,
+                        author,
+                    },
+                )?;
+                println!(
+                    "✔ Review record created: {} ({})",
+                    path.strip_prefix(&root_path).unwrap_or(&path).display(),
+                    id
+                );
+            }
+            ReviewCommands::List { json, root, doc } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let reviews = review::collect_reviews(&root_path.join(doc))?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&reviews)?);
+                } else {
+                    print!("{}", review::render_table(&reviews));
+                }
+            }
+            ReviewCommands::Check { required, root, doc } => {
+                let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
+                let doc_path = root_path.join(doc);
+                let reviews = review::collect_reviews(&doc_path)?;
+                let issue_ids = issue::collect_issues(&doc_path)?.into_iter().map(|i| i.meta.id).collect();
+                let problems = review::check(&reviews, &issue_ids, &required);
+                if problems.is_empty() {
+                    println!("✔ {} review record(s) valid.", reviews.len());
+                } else {
+                    for p in &problems {
+                        println!("{}", p);
+                    }
+                    exit(1);
+                }
+            }
+        },
         Commands::Profile { cmd } => match cmd {
             ProfileCommands::Show { profile, json } => {
                 let prof = Profile::load_from_file(&profile)?;

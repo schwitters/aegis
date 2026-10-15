@@ -1,7 +1,7 @@
 # Aegis: Traceability- & Process-Toolkit
 
 A modular systems engineering toolkit and process methodology for agent-based software development.
-It enforces end-to-end **Requirement → Usecase → Test → Code** traceability, controls rigor via domain profiles, binds 3-tier coding standards, and runs automated, fail-closed quality gates.
+It enforces end-to-end **Requirement → Architecture → Usecase → Test → Code** traceability, controls rigor via domain profiles, binds 3-tier coding standards, and runs automated, fail-closed quality gates.
 
 ## Components
 
@@ -56,19 +56,33 @@ Both conditions result in exit code 1, immediately halting the pipeline.
 
 ### Document Schema
 
-Requirements, use cases, and tests declare their metadata inside ` ```yaml ` blocks:
+Requirements, architecture elements, use cases, and tests declare their metadata as YAML frontmatter (` ```yaml ` blocks are accepted too). Every file in `requirements/`, `usecases/` and `testplan/` must carry an `id`; malformed, missing or duplicate metadata fails the trace instead of being skipped:
 
-```yaml
+```markdown
+---
 id: REQ-001
+---
 ```
-```yaml
+```markdown
+---
+id: ARCH-001
+satisfies: [REQ-001]
+---
+```
+```markdown
+---
 id: UC-001
 implements: [REQ-001, REQ-002]
+---
 ```
-```yaml
+```markdown
+---
 id: TEST-001
-verifies: [REQ-001]
+verifies: [REQ-001]      # integration tests: verifies: [ARCH-001]
+---
 ```
+
+Further checks: every planned `TEST-xxx` needs an `@verifies` implementation, every `ARCH-xxx` an integration test, and — once `doc/baseline.lock` exists — changed artifacts are `UNREVIEWED` and their downstream links `SUSPECT`.
 
 ---
 
@@ -98,7 +112,16 @@ cargo build --release --manifest-path tools/Cargo.toml
 ./tools/target/release/aegis issue list
 ./tools/target/release/aegis issue close ISSUE-0001
 
-# 4. Full profile-aware Execution Gate:
+# 4. Baseline (suspect links), frozen tests, review records:
+./tools/target/release/aegis baseline                    # dry run: unapproved changes + suspect links
+./tools/target/release/aegis baseline --approve alice
+./tools/target/release/aegis tests freeze --profile doc/profile.yaml
+./tools/target/release/aegis review create --stage spec --artifact doc/001_initial_spec.md --reviewer model-b --author model-a
+./tools/target/release/aegis review check --required spec architecture:2
+./tools/target/release/aegis impact --changed --kind feature
+
+# 5. Full profile-aware Execution Gate (partial runs with --only / --skip are never an acceptance):
+./tools/target/release/aegis gate --profile doc/local-first.yaml --only build,lint,test_freeze,tests
 ./tools/target/release/aegis gate --profile doc/embedded-safety.yaml
 ./tools/target/release/aegis gate --profile doc/enterprise.yaml
 
