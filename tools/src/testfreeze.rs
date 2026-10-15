@@ -97,6 +97,25 @@ pub fn test_fns_in(text: &str) -> Vec<String> {
     out
 }
 
+/// True when the test function `name` carries `#[ignore = "<reason>"]` (a documented, CI-scheduled exception).
+pub fn ignored_with_reason(text: &str, name: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    let fn_re = Regex::new(&format!(r"\bfn\s+{}\b", regex::escape(name))).unwrap();
+    let Some(pos) = lines.iter().position(|l| fn_re.is_match(l)) else { return false };
+    // only the attribute / doc-comment lines directly above this function
+    lines[..pos]
+        .iter()
+        .rev()
+        .take_while(|l| {
+            let t = l.trim_start();
+            t.starts_with("#[") || t.starts_with("///") || t.starts_with("//")
+        })
+        .any(|l| {
+            let t = l.trim();
+            t.starts_with("#[ignore = \"") && t.len() > "#[ignore = \"\"]".len()
+        })
+}
+
 /// (file, test function) pairs recorded in the lock (`# test <file> <fn>` lines).
 pub fn locked_tests(doc_dir: &Path) -> Result<BTreeSet<(String, String)>> {
     let path = lock_path(doc_dir);
@@ -157,13 +176,18 @@ pub fn freeze_checked(root: &Path, doc_dir: &Path, src_dirs: &[PathBuf], mode: F
         let results = parse_libtest(&String::from_utf8_lossy(&run.stdout));
         let mut violations = Vec::new();
         for (file, f) in &new_tests {
+            let ignore_reason = ignored_with_reason(&std::fs::read_to_string(root.join(file)).unwrap_or_default(), f);
             let outcome = results
                 .iter()
                 .find(|(name, _)| *name == f || name.ends_with(&format!("::{}", f)))
                 .map(|(_, r)| r.as_str());
             match (outcome, mode) {
                 (None, _) => violations.push(format!("{} ({}): not executed by cargo test", f, file)),
-                (Some("ignored"), _) => violations.push(format!("{} ({}): #[ignore]d — frozen tests must run", f, file)),
+                (Some("ignored"), _) if ignore_reason => {} // RULE-RS-019: needs external assets, runs in a named CI job
+                (Some("ignored"), _) => violations.push(format!(
+                    "{} ({}): #[ignore]d without a reason — frozen tests must run (or use #[ignore = \"<why, which CI job>\"])",
+                    f, file
+                )),
                 (Some("ok"), FreezeMode::FailFirst) => violations.push(format!(
                     "{} ({}): passes against the current code — it verifies nothing yet (use --characterization for \
                      tests that document existing behaviour)",

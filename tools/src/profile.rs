@@ -40,6 +40,13 @@ pub struct AgentLoopConfig {
     /// Attempts a stronger model gets with an `aegis escalate` bundle before a human decides
     #[serde(default = "default_escalation_attempts")]
     pub escalation_attempts: u32,
+    /// Maximum estimated tokens of one `aegis tasks` packet (sized to the implementation model's context)
+    #[serde(default = "default_max_task_tokens")]
+    pub max_task_tokens: usize,
+}
+
+fn default_max_task_tokens() -> usize {
+    6000
 }
 
 fn default_escalation_attempts() -> u32 {
@@ -60,6 +67,7 @@ impl Default for AgentLoopConfig {
             max_iterations: default_max_iterations(),
             fast_stages: default_fast_stages(),
             escalation_attempts: default_escalation_attempts(),
+            max_task_tokens: default_max_task_tokens(),
         }
     }
 }
@@ -110,6 +118,12 @@ pub struct GateStageConfig {
     /// architecture: third-party crate -> layers that may depend on it directly
     #[serde(default)]
     pub restricted: std::collections::BTreeMap<String, Vec<String>>,
+    /// architecture: layer -> the only third-party crates it may depend on (allowlist; dev-dependencies exempt)
+    #[serde(default)]
+    pub allowed: std::collections::BTreeMap<String, Vec<String>>,
+    /// mutation: packages to mutate (names or globs like `*-domain`); empty = whole workspace
+    #[serde(default)]
+    pub packages: Vec<String>,
 }
 
 impl Profile {

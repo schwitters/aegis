@@ -5,6 +5,7 @@ allow-panic-in-tests = true
 allow-print-in-tests = true
 allow-dbg-in-tests = true
 allow-indexing-slicing-in-tests = true
+too-many-lines-threshold = 60       # clippy::too_many_lines (workspace lints): code lines per function
 
 disallowed-methods = [
   { path = "std::thread::sleep", reason = "blocks the async runtime or the UI thread: use tokio::time::sleep, a timer or a condition (RULE-RS-008)" },

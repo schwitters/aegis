@@ -310,16 +310,30 @@ impl GateRunner {
 
     /// Checks contributed by the profile's rulesets for one stage, after the stage itself passed.
     fn ruleset_checks(&self, key: &str) -> StageResult {
-        if key == "lint" && self.rulesets.iter().any(|rf| rf.deviation_policy.is_some()) {
+        if key == "lint" && self.rulesets.iter().any(|rf| rf.deviation_policy.is_some() || !rf.forbidden_patterns.is_empty()) {
             let table = deviation::rule_table(&self.rulesets);
-            let findings = deviation::scan_dirs(&self.profile.source_paths(&self.root), &self.root, self.lang(), &table);
-            if !findings.is_empty() {
-                for f in &findings {
-                    println!("    {}", format!("DEVIATION {}: {}", f.location, f.message).red());
+            let issue_ids: BTreeSet<String> = issue::collect_issues(&self.root.join("doc"))
+                .map(|is| is.into_iter().map(|i| i.meta.id).collect())
+                .unwrap_or_default();
+            let policy = deviation::policy(&self.rulesets, issue_ids);
+            let dirs = self.profile.source_paths(&self.root);
+            let mut problems: Vec<String> = Vec::new();
+            if self.rulesets.iter().any(|rf| rf.deviation_policy.is_some()) {
+                problems.extend(
+                    deviation::scan_dirs_with_policy(&dirs, &self.root, self.lang(), &table, &policy)
+                        .into_iter()
+                        .map(|f| format!("DEVIATION {}: {}", f.location, f.message)),
+                );
+            }
+            let patterns: Vec<_> = self.rulesets.iter().flat_map(|rf| rf.forbidden_patterns.iter().cloned()).collect();
+            problems.extend(crate::patterns::scan(&patterns, &dirs, &self.root, &table, &policy.forbid_in));
+            if !problems.is_empty() {
+                for p in &problems {
+                    println!("    {}", p.red());
                 }
                 return StageResult::Failed(1);
             }
-            println!("    deviation scan: all suppressions covered by permitted AEGIS-DEVIATION markers");
+            println!("    deviation + pattern scan: clean");
         }
         for rf in &self.rulesets {
             for cmd in rf.gate_commands(key) {
@@ -688,8 +702,28 @@ impl GateRunner {
                 if !command_exists("cargo-mutants") {
                     return StageResult::NotExecutable("cargo-mutants missing (cargo install cargo-mutants)".to_string());
                 }
+                let packages = self.profile.get_stage_config("mutation").map(|c| c.packages.clone()).unwrap_or_default();
+                let mut args = String::new();
+                if !packages.is_empty() {
+                    let names = match self.workspace_packages() {
+                        Ok(n) => n,
+                        Err(e) => return StageResult::NotExecutable(e),
+                    };
+                    let globs: Vec<_> = packages.iter().map(|p| crate::patterns::glob_regex(p)).collect();
+                    let selected: Vec<&String> = names.iter().filter(|n| crate::patterns::matches_any(n, &globs)).collect();
+                    if selected.is_empty() {
+                        return StageResult::NotExecutable(format!(
+                            "gate.mutation.packages {:?} match no workspace package",
+                            packages
+                        ));
+                    }
+                    for n in &selected {
+                        args.push_str(&format!(" --package {}", n));
+                    }
+                    println!("    packages:{}", args.replace(" --package", ""));
+                }
                 // Exit codes 2 (missed mutants) and 3 (timeouts) still produce a scoreable report.
-                let rc = self.run_bash("cargo mutants --no-shuffle --output target/aegis-mutants");
+                let rc = self.run_bash(&format!("cargo mutants --no-shuffle --output target/aegis-mutants{}", args));
                 if !matches!(rc, Some(0) | Some(2) | Some(3)) {
                     return StageResult::Failed(rc.unwrap_or(1));
                 }
@@ -754,7 +788,7 @@ impl GateRunner {
             }
             Err(e) => return StageResult::NotExecutable(format!("cannot run cargo metadata: {}", e)),
         };
-        let problems = architecture::check(&metadata, &cfg.layers, &cfg.restricted);
+        let problems = architecture::check_with_allowlist(&metadata, &cfg.layers, &cfg.restricted, &cfg.allowed);
         if problems.is_empty() {
             let n = metadata.get("packages").and_then(|p| p.as_array()).map(|p| p.len()).unwrap_or(0);
             println!("    {} crate(s) conform to the layer policy", n);
@@ -765,6 +799,23 @@ impl GateRunner {
             }
             StageResult::Failed(1)
         }
+    }
+
+    /// Names of the workspace member packages (cargo metadata, offline).
+    fn workspace_packages(&self) -> std::result::Result<Vec<String>, String> {
+        let out = Command::new("cargo")
+            .args(["metadata", "--format-version", "1", "--no-deps", "--offline"])
+            .current_dir(&self.root)
+            .output()
+            .map_err(|e| format!("cannot run cargo metadata: {}", e))?;
+        if !out.status.success() {
+            return Err(format!("cargo metadata failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+        Ok(v["packages"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default())
     }
 
     fn stage_test_freeze(&self) -> StageResult {

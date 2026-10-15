@@ -27,6 +27,17 @@ fn allows(list: &[String], layer: &str) -> bool {
 /// `layers`: layer -> layers it may depend on (`*` = any). `restricted`: third-party crate -> layers that may depend
 /// on it directly. Unrestricted third-party crates are allowed everywhere.
 pub fn check(metadata: &Value, layers: &BTreeMap<String, Vec<String>>, restricted: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    check_with_allowlist(metadata, layers, restricted, &BTreeMap::new())
+}
+
+/// `check` plus per-layer allowlists of third-party crates (`allowed`): a layer with an allowlist may depend on no
+/// other third-party crate (normal and build dependencies; dev-dependencies are exempt).
+pub fn check_with_allowlist(
+    metadata: &Value,
+    layers: &BTreeMap<String, Vec<String>>,
+    restricted: &BTreeMap<String, Vec<String>>,
+    allowed: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
     let mut problems = Vec::new();
     if layers.is_empty() {
         problems.push("INVALID  gate.architecture.layers is empty — no layer policy to enforce".to_string());
@@ -39,8 +50,13 @@ pub fn check(metadata: &Value, layers: &BTreeMap<String, Vec<String>>, restricte
             }
         }
     }
-    for (krate, allowed) in restricted {
-        for l in allowed {
+    for l in allowed.keys() {
+        if !layers.contains_key(l) {
+            problems.push(format!("INVALID  allowlist for unknown layer {}", l));
+        }
+    }
+    for (krate, may) in restricted {
+        for l in may {
             if l != "*" && !layers.contains_key(l) {
                 problems.push(format!("INVALID  restricted crate {} names unknown layer {}", krate, l));
             }
@@ -84,6 +100,17 @@ pub fn check(metadata: &Value, layers: &BTreeMap<String, Vec<String>>, restricte
                         if allowed_layers.is_empty() { "none".to_string() } else { allowed_layers.join(", ") }
                     )),
                     None => {} // reported as UNLAYERED for the dependency itself
+                }
+            } else if let Some(list) = allowed.get(layer).filter(|_| kind != "dev") {
+                if !list.iter().any(|a| a == dep_name) {
+                    problems.push(format!(
+                        "LAYERING {} ({}) -> {} [{}]: not in the layer's allowlist ({})",
+                        name,
+                        layer,
+                        dep_name,
+                        kind,
+                        list.join(", ")
+                    ));
                 }
             } else if let Some(may_use) = restricted.get(dep_name) {
                 if !allows(may_use, layer) {

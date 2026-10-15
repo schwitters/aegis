@@ -68,6 +68,24 @@ pub struct DeviationPolicy {
     /// e.g. `// AEGIS-DEVIATION(<RULE-ID>): <justification>`
     #[serde(default)]
     pub marker: Option<String>,
+    /// The justification must name an existing issue (`ISSUE-xxxx`) that tracks the deviation
+    #[serde(default)]
+    pub require_issue: bool,
+    /// Path globs (relative to the repo root) where no deviation is permitted at all, e.g. `crates/*-domain/**`
+    #[serde(default)]
+    pub forbid_in: Vec<String>,
+}
+
+/// A source pattern that must not occur in the matching paths (checked in the lint stage).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForbiddenPattern {
+    /// Rule that owns the pattern; its `deviation` field decides whether a marker can lift it
+    pub rule: String,
+    /// Path globs relative to the repo root (`*` within a segment, `**` across segments)
+    pub paths: Vec<String>,
+    /// Regular expression matched per line (comment-only lines are skipped)
+    pub pattern: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +105,8 @@ pub struct RulesetFile {
     pub toolchain: Option<Toolchain>,
     #[serde(default)]
     pub deviation_policy: Option<DeviationPolicy>,
+    #[serde(default)]
+    pub forbidden_patterns: Vec<ForbiddenPattern>,
     #[serde(default)]
     pub rules: Vec<RuleItem>,
 }

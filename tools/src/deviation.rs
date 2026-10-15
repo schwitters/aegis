@@ -71,6 +71,55 @@ fn justification(raw: &str) -> &str {
     raw.trim().trim_end_matches("*/").trim()
 }
 
+/// Additional deviation policy merged from all rulesets.
+#[derive(Debug, Default, Clone)]
+pub struct Policy {
+    /// Markers must name an existing issue
+    pub require_issue: bool,
+    pub issue_ids: std::collections::BTreeSet<String>,
+    /// Paths (globs) where no marker is accepted
+    pub forbid_in: Vec<Regex>,
+}
+
+/// Merged policy of all rulesets (require_issue if any ruleset requires it; union of deviation-free zones).
+pub fn policy(rulesets: &[RulesetFile], issue_ids: std::collections::BTreeSet<String>) -> Policy {
+    let mut p = Policy { issue_ids, ..Default::default() };
+    for rf in rulesets {
+        if let Some(dp) = &rf.deviation_policy {
+            p.require_issue |= dp.require_issue;
+            p.forbid_in.extend(dp.forbid_in.iter().map(|g| crate::patterns::glob_regex(g)));
+        }
+    }
+    p
+}
+
+/// Policy findings for the markers of one file (issue reference, deviation-free zones).
+pub fn policy_findings(text: &str, location: &str, policy: &Policy) -> Vec<Finding> {
+    let marker_re = marker_regex();
+    let issue_re = Regex::new(r"ISSUE-\d+").unwrap();
+    let in_zone = crate::patterns::matches_any(location, &policy.forbid_in);
+    let mut findings = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let Some(cap) = marker_re.captures(line) else { continue };
+        let at = format!("{}:{}", location, idx + 1);
+        if in_zone {
+            findings.push(Finding { location: at.clone(), message: "deviations are not permitted in this path".to_string() });
+        }
+        if policy.require_issue {
+            let why = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+            match issue_re.find(why) {
+                None => findings.push(Finding { location: at, message: "marker must reference the tracking ISSUE-xxxx".to_string() }),
+                Some(m) if !policy.issue_ids.contains(m.as_str()) => findings.push(Finding {
+                    location: at,
+                    message: format!("marker references {}, which does not exist", m.as_str()),
+                }),
+                Some(_) => {}
+            }
+        }
+    }
+    findings
+}
+
 /// Checks one file's text. `location` prefixes findings (usually the path).
 pub fn scan_text(text: &str, location: &str, language: &str, rules: &BTreeMap<String, DeviationRule>) -> Vec<Finding> {
     let tokens = suppression_tokens(language);
@@ -138,6 +187,17 @@ pub fn scan_text(text: &str, location: &str, language: &str, rules: &BTreeMap<St
 
 /// Scans every source file of `language` under `dirs` (skipping build output and VCS folders).
 pub fn scan_dirs(dirs: &[PathBuf], root: &Path, language: &str, rules: &BTreeMap<String, DeviationRule>) -> Vec<Finding> {
+    scan_dirs_with_policy(dirs, root, language, rules, &Policy::default())
+}
+
+/// `scan_dirs` plus the merged policy (issue references, deviation-free zones).
+pub fn scan_dirs_with_policy(
+    dirs: &[PathBuf],
+    root: &Path,
+    language: &str,
+    rules: &BTreeMap<String, DeviationRule>,
+    policy: &Policy,
+) -> Vec<Finding> {
     let exts = source_extensions(language);
     let mut findings = Vec::new();
     for dir in dirs {
@@ -153,7 +213,10 @@ pub fn scan_dirs(dirs: &[PathBuf], root: &Path, language: &str, rules: &BTreeMap
             }
             let rel = path.strip_prefix(root).unwrap_or(path).display().to_string();
             match std::fs::read_to_string(path) {
-                Ok(text) => findings.extend(scan_text(&text, &rel, language, rules)),
+                Ok(text) => {
+                    findings.extend(scan_text(&text, &rel, language, rules));
+                    findings.extend(policy_findings(&text, &rel, policy));
+                }
                 // Fail closed: a file that cannot be read cannot be shown to be free of suppressions.
                 Err(e) => findings.push(Finding { location: rel, message: format!("unreadable source file: {}", e) }),
             }

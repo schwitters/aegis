@@ -96,9 +96,9 @@ enum Commands {
         profile: String,
         #[arg(long, default_value = ".")]
         root: String,
-        /// Maximum estimated tokens per packet; larger packets fail (split the requirement)
-        #[arg(long, default_value_t = 6000)]
-        max_tokens: usize,
+        /// Maximum estimated tokens per packet (default: agent_loop.max_task_tokens of the profile); larger packets fail
+        #[arg(long)]
+        max_tokens: Option<usize>,
         /// Generate although the baseline is not current or tests are not frozen (packets are marked DRAFT)
         #[arg(long)]
         draft: bool,
@@ -622,7 +622,8 @@ fn main() -> Result<()> {
         Commands::Tasks { profile, root, max_tokens, draft } => {
             let root_path = Path::new(&root).canonicalize().unwrap_or_else(|_| PathBuf::from(&root));
             let prof = Profile::load_from_file(root_path.join(&profile))?;
-            let report = aegis::tasks::generate(&root_path, &prof, &profile, max_tokens, draft)?;
+            let budget = max_tokens.unwrap_or_else(|| prof.agent_loop().max_task_tokens);
+            let report = aegis::tasks::generate(&root_path, &prof, &profile, budget, draft)?;
             println!("✔ {} task packet(s) -> doc/tasks/ (queue: doc/tasks/README.md)", report.tasks);
             for w in &report.problems {
                 println!("{}", w);

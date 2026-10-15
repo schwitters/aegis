@@ -10,6 +10,7 @@ pub mod init;
 pub mod instructions;
 pub mod issue;
 pub mod migrations;
+pub mod patterns;
 pub mod profile;
 pub mod review;
 pub mod rulesets;
@@ -915,5 +916,89 @@ agent_loop:\n  max_iterations: 2\n  fast_stages: [build, tests]\n";
         assert!(!b.contains("doc/tasks/TASK"), "doc/ excluded from the diff");
         assert!(escalate::bundle(&root, &prof, "doc/profile.yaml", "REQ-404", Some(String::new())).is_err());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_glob_and_forbidden_patterns() {
+        let g = patterns::glob_regex("crates/*-domain/src/**");
+        assert!(g.is_match("crates/shop-domain/src/lib.rs"));
+        assert!(g.is_match("crates/shop-domain/src/a/b.rs"));
+        assert!(!g.is_match("crates/shop-api/src/lib.rs"));
+        assert!(patterns::glob_regex("src/**/*.rs").is_match("src/x.rs"));
+        assert!(patterns::glob_regex("*-domain").is_match("shop-domain") && !patterns::glob_regex("*-domain").is_match("a/shop-domain"));
+
+        let root = temp_root("patterns");
+        write(&root, "crates/shop-domain/src/lib.rs", "// Utc::now is forbidden here (comment ok)\npub fn f() { let _ = chrono::Utc::now(); }\n// AEGIS-DEVIATION(RULE-P-OK): ISSUE-0001 test\nfn g() { std::env::var(\"X\"); }\n");
+        write(&root, "crates/shop-api/src/lib.rs", "// AEGIS-DEVIATION(RULE-P-OK): ISSUE-0001 legacy\nfn g() { std::env::var(\"X\"); }\nfn h() { std::env::var(\"Y\"); }\n");
+        let pats = vec![
+            rulesets::ForbiddenPattern { rule: "RULE-P-NO".into(), paths: vec!["crates/*-domain/src/**".into()], pattern: r"\bUtc::now".into(), message: "no clock".into() },
+            rulesets::ForbiddenPattern { rule: "RULE-P-OK".into(), paths: vec!["crates/**/src/**".into()], pattern: r"std::env::".into(), message: "no env".into() },
+        ];
+        let rules: std::collections::BTreeMap<String, deviation::DeviationRule> =
+            [("RULE-P-NO".to_string(), deviation::DeviationRule::Forbidden), ("RULE-P-OK".to_string(), deviation::DeviationRule::Permitted)].into_iter().collect();
+        let zones = vec![patterns::glob_regex("crates/*-domain/**")];
+        let f = patterns::scan(&pats, &[root.join("crates")], &root, &rules, &zones);
+        let has = |needle: &str| f.iter().any(|x| x.contains(needle));
+        assert!(has("shop-domain/src/lib.rs:2: [RULE-P-NO]"), "{:#?}", f);
+        assert!(!has("shop-domain/src/lib.rs:1:"), "comment lines are skipped");
+        assert!(has("shop-domain/src/lib.rs:4: [RULE-P-OK]"), "marker does not count inside a deviation-free zone");
+        assert!(!has("shop-api/src/lib.rs:2:"), "permitted rule + marker outside the zone");
+        assert!(has("shop-api/src/lib.rs:3: [RULE-P-OK]"));
+        assert_eq!(f.len(), 3, "{:#?}", f);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_deviation_policy_issue_and_zones() {
+        let policy = deviation::Policy {
+            require_issue: true,
+            issue_ids: ["ISSUE-0007".to_string()].into_iter().collect(),
+            forbid_in: vec![patterns::glob_regex("crates/*-domain/**")],
+        };
+        let text = "// AEGIS-DEVIATION(RULE-X-1): no issue here\n// AEGIS-DEVIATION(RULE-X-1): ISSUE-0099 unknown\n// AEGIS-DEVIATION(RULE-X-1): ISSUE-0007 tracked\n";
+        let f = deviation::policy_findings(text, "crates/shop-api/src/a.rs", &policy);
+        assert_eq!(f.len(), 2, "{:?}", f);
+        assert!(f[0].message.contains("must reference"));
+        assert!(f[1].message.contains("ISSUE-0099"));
+        let f = deviation::policy_findings("// AEGIS-DEVIATION(RULE-X-1): ISSUE-0007 tracked\n", "crates/shop-domain/src/a.rs", &policy);
+        assert!(f.iter().any(|x| x.message.contains("not permitted in this path")));
+    }
+
+    #[test]
+    fn test_architecture_allowlist() {
+        let (layers, restricted) = policy();
+        let allowed = [("domain".to_string(), vec!["serde".to_string(), "thiserror".to_string()])].into_iter().collect();
+        let meta = serde_json::json!({ "packages": [
+            { "name": "shop-domain", "dependencies": [
+                { "name": "serde", "kind": null }, { "name": "tokio", "kind": null }, { "name": "proptest", "kind": "dev" } ] },
+            { "name": "shop-api", "dependencies": [ { "name": "tokio", "kind": null } ] }
+        ]});
+        let p = architecture::check_with_allowlist(&meta, &layers, &restricted, &allowed);
+        assert_eq!(p.len(), 1, "{:#?}", p);
+        assert!(p[0].contains("shop-domain (domain) -> tokio [normal]: not in the layer's allowlist"));
+        let bad: std::collections::BTreeMap<String, Vec<String>> = [("nolayer".to_string(), vec![])].into_iter().collect();
+        assert!(architecture::check_with_allowlist(&meta, &layers, &restricted, &bad).iter().any(|x| x.contains("unknown layer nolayer")));
+    }
+
+    #[test]
+    fn test_ignore_reason_and_shipped_patterns() {
+        let src = "/// @verifies TEST-1\n#[test]\n#[ignore = \"needs the 2 GB model, CI job models\"]\nfn big() {}\n#[test]\n#[ignore]\nfn lazy() {}\n";
+        assert!(testfreeze::ignored_with_reason(src, "big"));
+        assert!(!testfreeze::ignored_with_reason(src, "lazy"));
+        // every pattern shipped in the rulesets is a valid regex and owned by an existing rule
+        for f in ["rust-web-enterprise.yaml", "rust-strict.yaml", "rust-service.yaml"] {
+            let rf = rulesets::load_ruleset(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../doc/rules").join(f)).unwrap();
+            let ids: std::collections::BTreeSet<&str> = rf.rules.iter().map(|r| r.id.as_str()).collect();
+            for p in &rf.forbidden_patterns {
+                assert!(regex::Regex::new(&p.pattern).is_ok(), "{}: {}", p.rule, p.pattern);
+                assert!(ids.contains(p.rule.as_str()), "pattern owned by unknown rule {}", p.rule);
+            }
+        }
+        let rf = rulesets::load_ruleset(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../doc/rules/rust-web-enterprise.yaml")).unwrap();
+        let clock = regex::Regex::new(&rf.forbidden_patterns[0].pattern).unwrap();
+        assert!(clock.is_match("let t = chrono::Utc::now();") && !clock.is_match("let t = clock.now();"));
+        let secrets = regex::Regex::new(&rf.forbidden_patterns[2].pattern).unwrap();
+        assert!(secrets.is_match("tracing::info!(user = %id, token = %t, \"login\");"));
+        assert!(!secrets.is_match("tracing::info!(user = %id, \"login\");"));
     }
 }

@@ -61,6 +61,16 @@ rules:
 - **`rationale`** — Technical rationale (guides Frontier models when evaluating trade-offs).
 - **`linter_check`** — (Optional) Exact compiler/linter check. If no 100% matching static check exists, the rule remains an explicit instruction and review check.
 
+Ruleset-level blocks (schema v2): `toolchain` (clippy config/flags, `gate_commands` per gate stage — `aegis …` runs the gate's own binary), `deviation_policy` (`marker`, `require_issue`, `forbid_in`) and `forbidden_patterns`:
+
+```yaml
+forbidden_patterns:
+  - rule: RULE-RWE-094                       # owning rule; its `deviation` decides whether a marker can lift it
+    paths: ["crates/*-domain/src/**"]        # globs: * within a segment, ** across segments
+    pattern: '\b(SystemTime::now|Utc::now)'   # regex per line; comment-only lines are skipped
+    message: "take time from a Clock port"
+```
+
 ---
 
 ## Profile Integration

@@ -54,10 +54,29 @@ toolchain:
       - mkdocs build --strict --quiet -f docs/hosting/mkdocs.yml                   # RULE-RWE-100
 
 deviation_policy:
-  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): ISSUE-xxxx <justification>"
   placement: on the line directly above the suppression attribute or deviating statement
   suppression: "#[expect(<lint>, reason = \"...\")] only; #[allow(...)] is rejected by clippy::allow_attributes"
   review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+  require_issue: true            # every marker names an existing ISSUE-xxxx that tracks the deviation
+  forbid_in:                     # the pure domain layer takes no deviations at all
+    - "crates/*-domain/**"
+
+# Path-scoped prohibitions (lint stage). Comment-only lines are skipped; a marker lifts a finding only if the rule
+# permits deviations and the file is outside `forbid_in`.
+forbidden_patterns:
+  - rule: RULE-RWE-094
+    paths: ["crates/*-domain/src/**"]
+    pattern: '\b(SystemTime::now|Utc::now|Local::now|Instant::now|OffsetDateTime::now_utc|thread_rng|rand::random|OsRng|std::fs::|std::net::|tokio::)'
+    message: "domain logic must be deterministic and I/O-free: take time/randomness from a Clock/Rng port, do I/O in adapters"
+  - rule: RULE-RWE-091
+    paths: ["crates/*-domain/src/**", "crates/*-application/src/**", "crates/*-storage/src/**", "crates/*-api/src/**"]
+    pattern: '\b(std::env::|dotenvy::)'
+    message: "configuration is read only in the server crate (composition root) and injected"
+  - rule: RULE-RWE-095
+    paths: ["crates/**/src/**", "src/**"]
+    pattern: '\b(trace|debug|info|warn|error)!\s*\(.*\b(password|passwd|secret|token|authorization|cookie|api_key|session_id|credit_card)\b'
+    message: "possible secret in a tracing call: log an opaque ID, wrap values in SecretString/Pii<T>"
 
 # -----------------------------------------------------------------------------
 # Field reference (v2):
@@ -722,7 +741,7 @@ rules:
       - { tool: gate-script, check: "gitleaks detect (toolchain.gate_commands.security)" }
     linter_check: "clippy::disallowed_methods, gate-script:gitleaks"
     example_good: |
-      // AEGIS-DEVIATION(RULE-RWE-080): the config module is the only reader of the process environment
+      // AEGIS-DEVIATION(RULE-RWE-080): ISSUE-0001 the config module is the only reader of the process environment
       #[expect(clippy::disallowed_methods, reason = "central configuration loading")]
       fn env(key: &'static str) -> Result<String, ConfigError> {
           std::env::var(key).map_err(|_| ConfigError::Missing(key))
@@ -924,3 +943,39 @@ rules:
     checks:
       - { tool: gate-script, check: "docs/collect-legal.sh: cargo about generate + cargo cyclonedx (toolchain.gate_commands.deliverables)" }
     linter_check: "gate-script:cargo-about, gate-script:cargo-cyclonedx"
+
+  - id: RULE-RWE-094
+    title: Deterministic, I/O-Free Domain Layer
+    category: design
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      The domain crate never reads the clock, randomness, the environment, files or the network, and uses no async
+      runtime. Time and randomness enter through ports defined in the application layer (e.g. `trait Clock { fn
+      now(&self) -> OffsetDateTime; }`), implemented in the server crate and replaced by fixed fakes in tests.
+      The domain crate depends only on the crates in the profile's allowlist (gate.architecture.allowed).
+    rationale: Deterministic domain code is testable without mocks of the world and gives reproducible test failures.
+    checks:
+      - { tool: gate-script, check: "forbidden_patterns (clock, randomness, fs, net, tokio in crates/*-domain)" }
+      - { tool: gate-script, check: "aegis gate stage architecture (domain allowlist)" }
+    example_good: |
+      // <project>-application
+      pub trait Clock: Send + Sync { fn now(&self) -> OffsetDateTime; }
+      pub fn expire_sessions(clock: &dyn Clock, sessions: &mut [Session]) { /* uses clock.now() */ }
+
+  - id: RULE-RWE-095
+    title: No Secrets or Credentials in Tracing Calls
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      tracing macros never receive passwords, tokens, cookies, authorization headers, API keys or session IDs — not
+      as fields, not formatted into the message. Log an opaque identifier (user ID, correlation ID) instead; secrets
+      are SecretString and personal data Pii<T> (RULE-RWE-070), whose Debug/Display are redacted. #[instrument]
+      skips such parameters (skip(password)). The gate flags suspicious field names in single-line tracing calls; the
+      review checks multi-line calls.
+    rationale: Logs are copied to many systems with long retention; one leaked token in a log is a breach.
+    checks:
+      - { tool: gate-script, check: "forbidden_patterns (secret field names in tracing calls)" }

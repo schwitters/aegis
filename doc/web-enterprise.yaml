@@ -62,6 +62,9 @@ gate:
       api: [domain, application]
       server: [domain, application, storage, api]
       tests: ["*"]
+    # layer -> the only third-party crates it may depend on (dev-dependencies exempt; RULE-RWE-094)
+    allowed:
+      domain: [serde, thiserror, uuid, time, chrono, rust_decimal, secrecy]
     # third-party crate -> layers that may depend on it directly (all others: allowed everywhere)
     restricted:
       sqlx: [storage, tests]
@@ -98,6 +101,7 @@ gate:
   mutation:
     active: true
     threshold: 70                # cargo-mutants; locally `cargo mutants --in-diff` for fast feedback
+    packages: ["*-domain", "*-application"]   # business logic; adapters are covered by integration tests
   load_test:
     active: true
     # The scenario asserts the latency/throughput budgets of the non-functional requirements itself (k6 thresholds).
@@ -119,6 +123,7 @@ gate:
 agent_loop:
   max_iterations: 3
   fast_stages: [build, architecture, lint, test_freeze, tests]
+  max_task_tokens: 6000          # aegis tasks packet budget: size it to the implementation model's context
 
 # --- 3. Deliverables ---------------------------------------------------------
 deliverables:

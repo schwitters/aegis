@@ -51,3 +51,5 @@ allow_attributes_without_reason = "deny"
 # RULE-RS-018 documented public API
 missing_errors_doc = "deny"
 missing_panics_doc = "deny"
+# Small functions for reviewers and small models (threshold 60 code lines: clippy.toml too-many-lines-threshold)
+too_many_lines = "deny"

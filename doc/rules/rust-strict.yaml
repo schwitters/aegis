@@ -469,8 +469,10 @@ rules:
       Tests are deterministic: no sleeps for synchronization (use channels, barriers, tokio::time::pause), no network
       beyond loopback, no dependence on the developer's files or home directory (tempfile::TempDir), fixed seeds for
       randomness. Parsers and normalizers get property tests (proptest) for "never panics" and round-trip
-      properties. Tests that need large external assets (models) are #[ignore]d with a reason and run in a named CI
-      job, never silently skipped.
+      properties. Tests that need large external assets (models) are #[ignore = "<reason, CI job>"]d and run in a
+      named CI job, never silently skipped. Assertions are sharp: they check exact values and exact error variants
+      (assert!(matches!(r, Err(LoginError::Locked { .. })))), never only is_ok()/is_err(), and cover the boundaries the
+      test plan lists (0, 1, MAX, empty, malformed input, concurrent access).
     rationale: Flaky tests erode the gate; traceability needs the annotation on the test itself.
     checks:
       - { tool: gate-script, check: "aegis trace: every TEST-xxx has an @verifies annotation" }
@@ -545,8 +547,9 @@ rules:
     instruction: >
       No `static mut`. Global state only via std::sync::OnceLock / LazyLock with immutable contents. Shared mutable
       state lives behind Arc<Mutex<_>>/RwLock with the smallest possible critical section, or is owned by one task
-      and reached through messages (preferred). When more than one lock exists, the lock order is documented on the
-      types and never inverted. Atomics use the weakest correct Ordering with a comment justifying it.
+      and reached through messages (preferred). Lock guards are dropped before every .await (scope the guard or move
+      the data out); use tokio::sync locks only where a guard must be held across an await. When more than one lock
+      exists, the lock order is documented on the types and never inverted. Atomics use the weakest correct Ordering with a comment justifying it.
     rationale: Data races are prevented by the compiler; deadlocks and lost updates are not.
     checks:
       - { tool: rustc, check: "static_mut_refs (deny)" }
@@ -578,3 +581,20 @@ rules:
       streams or in bounded chunks. Each long-running component documents its steady-state memory budget in the
       architecture, and tests assert caches stay within it.
     rationale: A single 20 GB video or log file must not take down an indexer that runs unattended on a server.
+
+  - id: RULE-RS-026
+    title: Parse, Don't Validate — Newtypes Across Boundaries
+    category: types
+    severity: error
+    enforcement: review
+    deviation: permitted
+    instruction: >
+      Values with invariants (identifiers, e-mail addresses, quantities, money, non-empty names, ranges) are newtypes
+      with a private field and a fallible constructor (TryFrom / parse), created once at the trust boundary. Public
+      functions across module and crate boundaries take and return these types, not raw String, i64, Uuid or f64;
+      code behind the boundary never re-validates. Money is never a float.
+    rationale: An invalid value that cannot be constructed cannot reach the business logic; signatures document the invariants.
+    example_bad: |
+      pub fn transfer(from: Uuid, to: Uuid, cents: i64) -> Result<(), Error>
+    example_good: |
+      pub fn transfer(from: AccountId, to: AccountId, amount: PositiveAmount) -> Result<(), TransferError>
