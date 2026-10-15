@@ -90,5 +90,9 @@ coding_constraints:
 - **[`cpp20-core.yaml`](cpp20-core.yaml)**: Modern C++20, RAII, smart pointers, concepts, zero raw owning pointers. Allows exceptions for exceptional states.
 - **[`cpp-strict.yaml`](cpp-strict.yaml)**: Strict C++ with Google C++ Style, RAII, CMake+vcpkg, **no exceptions in application core** (Result/Status error handling).
 - **[`rust-safety.yaml`](rust-safety.yaml)**: Strict memory safety, mandatory `// SAFETY:` proofs for `unsafe` blocks, zero `unwrap()` in production paths.
+- **[`rust-strict.yaml`](rust-strict.yaml)**: Strict, defensive Rust for applications and services (Schema v2); base for the Rust overlays below.
+- **[`rust-service.yaml`](rust-service.yaml)**: Overlay for long-running network services (auth by default, rustls, timeouts, graceful shutdown).
+- **[`rust-egui.yaml`](rust-egui.yaml)**: Overlay for egui desktop UIs.
+- **[`rust-web-enterprise.yaml`](rust-web-enterprise.yaml)**: Overlay for server-rendered web apps (Axum, SQLx/SQLite, Askama, htmx), OWASP ASVS 5.0 L2 and GDPR. Load together with `rust-strict.yaml` and `rust-service.yaml`; clippy template: [`templates/rust-web/clippy.toml`](../../templates/rust-web/clippy.toml).
 - **[`java-enterprise.yaml`](java-enterprise.yaml)**: Java 17/21 Backend, immutability by default, records, null-safety via `Optional`.
 - **[`java-google-style.yaml`](java-google-style.yaml)**: Formatting, naming, and Javadoc conforming to the [Google Java Style Guide](https://google.github.io/styleguide/javaguide.html).

@@ -1,0 +1,77 @@
+# Aegis clippy configuration for web applications: rust-strict.yaml + rust-service.yaml + rust-web-enterprise.yaml.
+# Superset of templates/rust/clippy.toml — a workspace has exactly one clippy.toml (root), so copy this file instead of
+# the plain Rust template. Lint levels come from templates/rust/workspace-lints.toml (disallowed_methods = "deny",
+# allow_attributes = "deny"); exceptions only via `// AEGIS-DEVIATION(<RULE-ID>): <why>` + #[expect(...)].
+# `allow-invalid = true` keeps crates that do not depend on the banned crate (e.g. the domain crate) lint-clean.
+# Verify the third-party paths against the crate versions in Cargo.lock when upgrading (clippy cannot warn about a
+# path that `allow-invalid` silences).
+
+# --- rust-strict.yaml (RULE-RS-001, -008, -009, -024) ------------------------------------------------------------
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "blocks the async runtime: use tokio::time::sleep (RULE-RS-008)" },
+  { path = "std::sync::mpsc::channel", reason = "unbounded queue: use std::sync::mpsc::sync_channel(n) (RULE-RS-009)" },
+  { path = "tokio::sync::mpsc::unbounded_channel", reason = "unbounded queue: use tokio::sync::mpsc::channel(n) (RULE-RS-009)", allow-invalid = true },
+  { path = "crossbeam_channel::unbounded", reason = "unbounded queue: use crossbeam_channel::bounded(n) (RULE-RS-009)", allow-invalid = true },
+  { path = "std::env::set_var", reason = "process-global mutation (RULE-RS-024)" },
+  { path = "std::env::remove_var", reason = "process-global mutation (RULE-RS-024)" },
+  { path = "std::env::set_current_dir", reason = "process-global mutation (RULE-RS-024)" },
+
+  # --- RULE-RWE-001: SQL only through checked macros or QueryBuilder::push_bind -----------------------------------
+  { path = "sqlx::query", reason = "use sqlx::query! (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::query_as", reason = "use sqlx::query_as! (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::query_scalar", reason = "use sqlx::query_scalar! (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::query_with", reason = "unchecked SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::query_as_with", reason = "unchecked SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::query_scalar_with", reason = "unchecked SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::raw_sql", reason = "unchecked SQL string (RULE-RWE-001)", allow-invalid = true },
+  # Executor methods accept a plain &str: `pool.execute(format!(..))` would bypass every check above.
+  # Query/QueryAs/Map::execute etc. (used after query!) are different items and stay allowed.
+  { path = "sqlx::Executor::execute", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::execute_many", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::fetch", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::fetch_many", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::fetch_all", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::fetch_one", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+  { path = "sqlx::Executor::fetch_optional", reason = "executes a raw SQL string (RULE-RWE-001)", allow-invalid = true },
+
+  # --- RULE-RWE-003: no OS commands -----------------------------------------------------------------------------
+  { path = "std::process::Command::new", reason = "no OS commands (RULE-RWE-003)" },
+  { path = "tokio::process::Command::new", reason = "no OS commands (RULE-RWE-003)", allow-invalid = true },
+
+  # --- RULE-RWE-042: no wildcard CORS ---------------------------------------------------------------------------
+  { path = "tower_http::cors::CorsLayer::permissive", reason = "configure CORS explicitly (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::CorsLayer::very_permissive", reason = "configure CORS explicitly (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowOrigin::any", reason = "no wildcard origins (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowOrigin::mirror_request", reason = "reflecting the Origin is a wildcard (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowHeaders::any", reason = "list allowed headers explicitly (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowHeaders::mirror_request", reason = "list allowed headers explicitly (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowMethods::any", reason = "list allowed methods explicitly (RULE-RWE-042)", allow-invalid = true },
+  { path = "tower_http::cors::AllowMethods::mirror_request", reason = "list allowed methods explicitly (RULE-RWE-042)", allow-invalid = true },
+
+  # --- RULE-RWE-074: outbound HTTP only through the central client factory --------------------------------------
+  { path = "reqwest::get", reason = "use the outbound client factory (allowlist, timeouts) (RULE-RWE-074)", allow-invalid = true },
+  { path = "reqwest::blocking::get", reason = "use the outbound client factory (RULE-RWE-074)", allow-invalid = true },
+  { path = "reqwest::Client::new", reason = "use the outbound client factory (RULE-RWE-074)", allow-invalid = true },
+  { path = "reqwest::Client::builder", reason = "only the outbound client factory builds clients (RULE-RWE-074)", allow-invalid = true },
+  { path = "reqwest::ClientBuilder::danger_accept_invalid_certs", reason = "always validate TLS certificates (RULE-RWE-074)", allow-invalid = true },
+  { path = "reqwest::ClientBuilder::danger_accept_invalid_hostnames", reason = "always validate TLS hostnames (RULE-RWE-074)", allow-invalid = true },
+
+  # --- RULE-RWE-080: configuration only in the config module ----------------------------------------------------
+  { path = "std::env::var", reason = "read configuration only in the config module (RULE-RWE-080)" },
+  { path = "std::env::var_os", reason = "read configuration only in the config module (RULE-RWE-080)" },
+  { path = "std::env::vars", reason = "read configuration only in the config module (RULE-RWE-080)" },
+  { path = "std::env::vars_os", reason = "read configuration only in the config module (RULE-RWE-080)" },
+  { path = "dotenvy::var", reason = "read configuration only in the config module (RULE-RWE-080)", allow-invalid = true },
+  { path = "dotenvy::vars", reason = "read configuration only in the config module (RULE-RWE-080)", allow-invalid = true },
+]
+
+disallowed-types = [
+  { path = "tower_http::cors::Any", reason = "no wildcard origins/headers/methods (RULE-RWE-042)", allow-invalid = true },
+]

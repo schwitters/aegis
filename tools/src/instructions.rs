@@ -139,6 +139,13 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
                     .with_context(|| format!("Failed to parse ruleset {}", rf_path.display()))?;
                 {
                     out.push_str(&format!("### Ruleset: {} ({})\n\n", rf.ruleset, rf.standard.as_deref().unwrap_or("Standard")));
+                    let fence = match rf.language.as_deref().or(profile.as_ref().and_then(|p| p.language.as_deref())) {
+                        Some("c" | "c11") => "c",
+                        Some("cpp" | "cpp20" | "c++") => "cpp",
+                        Some(lang) => lang,
+                        None => "text",
+                    }
+                    .to_string();
                     for rule in rf.rules {
                         out.push_str(&format!("- **[{}] {}** (Severity: {})\n", rule.id, rule.title, rule.severity.as_deref().unwrap_or("error")));
                         out.push_str(&format!("  *Instruction:* {}\n", rule.instruction.trim()));
@@ -154,14 +161,14 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
                             out.push_str("  *Deviation:* forbidden.\n");
                         }
                         if let Some(ref bad) = rule.example_bad {
-                            out.push_str("\n  Do NOT write:\n\n  ```c\n");
+                            out.push_str(&format!("\n  Do NOT write:\n\n  ```{}\n", fence));
                             for line in bad.trim_end().lines() {
                                 out.push_str(&format!("  {}\n", line));
                             }
                             out.push_str("  ```\n");
                         }
                         if let Some(ref good) = rule.example_good {
-                            out.push_str("\n  Write instead:\n\n  ```c\n");
+                            out.push_str(&format!("\n  Write instead:\n\n  ```{}\n", fence));
                             for line in good.trim_end().lines() {
                                 out.push_str(&format!("  {}\n", line));
                             }
