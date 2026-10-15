@@ -9,7 +9,7 @@ It enforces end-to-end **Requirement → Architecture → Usecase → Test → C
 |---|---|
 | [`tools/`](../tools/) (`aegis`) | Precompiled, standalone Rust toolkit. Unifies **Traceability verification**, **Impact analysis**, **Issue lifecycle management**, **Profile inspection**, and the **Quality Gate** without external runtime dependencies. |
 | [`tools/gate.sh`](../tools/gate.sh) | Profile-aware, fail-closed verification gate wrapper (delegates to `aegis gate`). Reads `doc/<profile>.yaml`, enforcing stages and coverage thresholds. |
-| [Profiles](embedded-safety.yaml) | One process, N profiles: `embedded-safety.yaml` (ISO 26262, ASIL-D) and `enterprise.yaml` configure domain rigor. |
+| [Profiles](embedded-safety.yaml) | One process, N profiles: `embedded-safety.yaml` (ISO 26262, ASIL-D), `enterprise.yaml`, `web-enterprise.yaml` (Rust web, ASVS L2, GDPR) and `local-first.yaml` configure domain rigor. |
 | [`doc/rules/`](rules/README.md) | Reusable, strict **Coding Rulesets** (`c11-strict.yaml`, `c11-embedded-safety.yaml`, `cpp20-core.yaml`, `cpp-strict.yaml`, `rust-safety.yaml`, `java-enterprise.yaml`, `java-google-style.yaml`). |
 | [`doc/prompts/`](prompts/README.md) | Standardized **Prompt Playbook** (Stages 01 - 07: Ideation, Blind Review, Derivation, Shift-Left Tests, 27B Synthesis, Implementation, Final Audit). |
 | [`doc/adoption-guide.md`](adoption-guide.md) | Practical adoption guide for Greenfield (from scratch) and Brownfield (legacy migration) projects. |

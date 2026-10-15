@@ -151,9 +151,11 @@ pub fn scan_dirs(dirs: &[PathBuf], root: &Path, language: &str, rules: &BTreeMap
             if !path.is_file() || !exts.contains(&ext) {
                 continue;
             }
-            if let Ok(text) = std::fs::read_to_string(path) {
-                let rel = path.strip_prefix(root).unwrap_or(path).display().to_string();
-                findings.extend(scan_text(&text, &rel, language, rules));
+            let rel = path.strip_prefix(root).unwrap_or(path).display().to_string();
+            match std::fs::read_to_string(path) {
+                Ok(text) => findings.extend(scan_text(&text, &rel, language, rules)),
+                // Fail closed: a file that cannot be read cannot be shown to be free of suppressions.
+                Err(e) => findings.push(Finding { location: rel, message: format!("unreadable source file: {}", e) }),
             }
         }
     }

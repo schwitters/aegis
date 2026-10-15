@@ -33,6 +33,10 @@ aegis init --profile enterprise --lang rust
 
 # For safety-critical firmware (C11, Embedded Rust, ASIL-D):
 aegis init --profile embedded-safety --lang c
+
+# For server-rendered Rust web applications (Axum, SQLx, Askama, htmx; ASVS L2, GDPR):
+# also writes clippy.toml and deny.toml to the repository root and doc/rules/workspace-lints.toml
+aegis init --profile web-enterprise --lang rust
 ```
 
 This creates the required directory tree (`doc/requirements/`, `doc/architecture/`, `doc/usecases/`, `doc/testplan/`, `doc/reviews/`, `doc/issues/`, `doc/rules/`, and `doc/deliverables/manifest.md`).

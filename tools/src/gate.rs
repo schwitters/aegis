@@ -1,7 +1,9 @@
 use crate::baseline;
+use crate::deviation;
 use crate::issue;
 use crate::profile::Profile;
 use crate::review;
+use crate::rulesets::{self, RulesetFile};
 use crate::testfreeze;
 use crate::traceability::{self, Trace};
 use anyhow::{bail, Result};
@@ -27,6 +29,10 @@ pub struct GateRunner {
     pub results: Vec<(String, StageResult)>,
     pub only: Vec<String>,
     pub skip: Vec<String>,
+    /// Rulesets referenced by the profile (toolchain.gate_commands, clippy flags, deviation policy)
+    pub rulesets: Vec<RulesetFile>,
+    /// Set when a referenced ruleset is missing, unparsable or declares unknown gate stages: the gate is red.
+    pub ruleset_error: Option<String>,
 }
 
 /// Execution order. Cheap deterministic checks first; reviews last (the final review happens on a green gate).
@@ -48,6 +54,52 @@ pub const STAGES: [(&str, &str); 13] = [
 
 /// Stages implemented by Aegis itself; a `command` override would bypass their checks.
 const INTERNAL_STAGES: [&str; 5] = ["test_freeze", "traceability", "issues", "deliverables", "reviews"];
+
+/// Splits a command line into words, honouring single and double quotes (enough to find the program name).
+fn shell_words(cmd: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in cmd.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => cur.push(c),
+            (None, '"' | '\'') => quote = Some(c),
+            (None, c) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// The executable a shell command line needs, skipping `!` and leading VAR=value assignments; `cargo <sub>` maps to
+/// the `cargo-<sub>` plugin for subcommands that are not built into cargo. `None` for shell builtins.
+pub fn command_tool(cmd: &str) -> Option<String> {
+    let words = shell_words(cmd);
+    let mut it = words
+        .iter()
+        .skip_while(|w| *w == "!" || (w.contains('=') && !w.starts_with('-')));
+    let first = it.next()?;
+    match first.as_str() {
+        "test" | "[" | "[[" | "true" | "false" | "echo" | "printf" | "cd" | "exit" | "export" | "set" | "command"
+        | "source" | "." | ":" | "(" | "{" | "if" | "for" | "while" | "case" => None,
+        "cargo" => match it.next().map(|s| s.as_str()) {
+            None | Some("build" | "check" | "test" | "doc" | "run" | "bench" | "metadata" | "tree" | "fetch") => {
+                Some("cargo".to_string())
+            }
+            Some(sub) if sub.starts_with('-') || sub.starts_with('+') => Some("cargo".to_string()),
+            Some(sub) => Some(format!("cargo-{}", sub)),
+        },
+        w => Some(w.to_string()),
+    }
+}
 
 fn pass_if_zero(rc: Option<i32>) -> StageResult {
     if rc == Some(0) {
@@ -81,12 +133,34 @@ fn command_exists(cmd: &str) -> bool {
 
 impl GateRunner {
     pub fn new(root: PathBuf, profile: Profile) -> Self {
+        let (rulesets, ruleset_error) = match rulesets::load_referenced(&root, &profile) {
+            Ok(rs) => {
+                let unknown: Vec<String> = rs
+                    .iter()
+                    .flat_map(|rf| {
+                        rf.toolchain
+                            .iter()
+                            .flat_map(|t| t.gate_commands.keys())
+                            .filter(|k| !STAGES.iter().any(|(_, s)| s == k))
+                            .map(move |k| format!("{}: toolchain.gate_commands.{}", rf.ruleset, k))
+                    })
+                    .collect();
+                if unknown.is_empty() {
+                    (rs, None)
+                } else {
+                    (rs, Some(format!("unknown gate stage(s): {}", unknown.join(", "))))
+                }
+            }
+            Err(e) => (Vec::new(), Some(format!("{:#}", e))),
+        };
         Self {
             root,
             profile,
             results: Vec::new(),
             only: Vec::new(),
             skip: Vec::new(),
+            rulesets,
+            ruleset_error,
         }
     }
 
@@ -138,6 +212,15 @@ impl GateRunner {
         );
         println!();
 
+        if let Some(err) = self.ruleset_error.clone() {
+            println!("{}", "▶ Rulesets".bold());
+            println!("  {}", format!("✘ Rulesets ({})", err).red());
+            println!();
+            self.results.push(("Rulesets".to_string(), StageResult::NotExecutable(err)));
+            self.print_summary(false);
+            return Ok(false);
+        }
+
         for (display_name, key) in STAGES {
             let res = self.execute_stage(display_name, key)?;
             let failed = matches!(res, StageResult::NotExecutable(_) | StageResult::Failed(_));
@@ -188,6 +271,8 @@ impl GateRunner {
             }
             None => self.run_builtin(key),
         };
+        // Ruleset additions (deviation scan, toolchain.gate_commands) run on top of the stage's own check.
+        let res = if res == StageResult::Success { self.ruleset_checks(key) } else { res };
 
         match &res {
             StageResult::Success => {
@@ -211,6 +296,60 @@ impl GateRunner {
         }
 
         Ok(res)
+    }
+
+    /// Checks contributed by the profile's rulesets for one stage, after the stage itself passed.
+    fn ruleset_checks(&self, key: &str) -> StageResult {
+        if key == "lint" && self.rulesets.iter().any(|rf| rf.deviation_policy.is_some()) {
+            let table = deviation::rule_table(&self.rulesets);
+            let findings = deviation::scan_dirs(&self.profile.source_paths(&self.root), &self.root, self.lang(), &table);
+            if !findings.is_empty() {
+                for f in &findings {
+                    println!("    {}", format!("DEVIATION {}: {}", f.location, f.message).red());
+                }
+                return StageResult::Failed(1);
+            }
+            println!("    deviation scan: all suppressions covered by permitted AEGIS-DEVIATION markers");
+        }
+        for rf in &self.rulesets {
+            for cmd in rf.gate_commands(key) {
+                let tool = command_tool(&cmd);
+                if let Some(t) = tool.as_deref() {
+                    if !command_exists(t) {
+                        return StageResult::NotExecutable(format!("{} (from {}) not installed: {}", t, rf.ruleset, cmd));
+                    }
+                }
+                println!("    $ {}   [{}]", cmd, rf.ruleset);
+                let res = pass_if_zero(self.run_bash(&cmd));
+                if res != StageResult::Success {
+                    return res;
+                }
+            }
+        }
+        StageResult::Success
+    }
+
+    /// Clippy invocation: `-D warnings` plus the extra flags the rulesets declare (deduplicated).
+    fn clippy_command(&self) -> String {
+        let mut extra: Vec<String> = Vec::new();
+        for rf in &self.rulesets {
+            let flags = rf.clippy_flags();
+            // v1 rulesets spell cargo args and lint args in one list: keep only what follows `--`.
+            let lint_flags: Vec<String> = match flags.iter().position(|f| f == "--") {
+                Some(i) => flags[i + 1..].to_vec(),
+                None => flags,
+            };
+            let joined = lint_flags.join(" ");
+            if !joined.is_empty() && joined != "-D warnings" && !extra.contains(&joined) {
+                extra.push(joined);
+            }
+        }
+        let mut cmd = "cargo clippy --all-targets --all-features -- -D warnings".to_string();
+        for e in extra {
+            cmd.push(' ');
+            cmd.push_str(&e);
+        }
+        cmd
     }
 
     fn run_builtin(&self, key: &str) -> StageResult {
@@ -306,7 +445,7 @@ impl GateRunner {
             }
             "rust" => {
                 if command_exists("cargo") && self.root.join("Cargo.toml").exists() {
-                    let rc = self.run_bash("cargo clippy --all-targets --all-features -- -D warnings");
+                    let rc = self.run_bash(&self.clippy_command());
                     if rc == Some(0) { StageResult::Success } else { StageResult::Failed(rc.unwrap_or(1)) }
                 } else {
                     StageResult::NotExecutable("cargo missing".to_string())

@@ -1,4 +1,5 @@
 pub mod baseline;
+pub mod deviation;
 pub mod gate;
 pub mod impact;
 pub mod init;
@@ -6,6 +7,7 @@ pub mod instructions;
 pub mod issue;
 pub mod profile;
 pub mod review;
+pub mod rulesets;
 pub mod testfreeze;
 pub mod traceability;
 
@@ -405,6 +407,122 @@ mod tests {
         assert!(g.results.iter().any(|(_, r)| *r == gate::StageResult::Skipped));
 
         assert!(gate_with(&root, yaml).with_selection(vec!["nonsense".into()], vec![]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    const RULESET_WITH_TOOLCHAIN: &str = "ruleset: t\nlanguage: rust\n\
+deviation_policy:\n  marker: \"// AEGIS-DEVIATION(<RULE-ID>): <justification>\"\n\
+toolchain:\n  gate_commands:\n    load_test:\n      - GATE_CMD\n\
+rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    deviation: permitted\n\
+\x20 - id: RULE-T-002\n    title: never\n    instruction: y\n    deviation: forbidden\n";
+
+    fn gate_with_ruleset(root: &std::path::Path, gate_cmd: &str, extra_gate: &str) -> gate::GateRunner {
+        write(root, "doc/rules/t.yaml", &RULESET_WITH_TOOLCHAIN.replace("GATE_CMD", gate_cmd));
+        gate_with(
+            root,
+            &format!("profile: t\nlanguage: rust\nrulesets: [doc/rules/t.yaml]\ngate:\n{}", extra_gate),
+        )
+    }
+
+    #[test]
+    fn test_command_tool_detection() {
+        assert_eq!(gate::command_tool("gitleaks detect --no-banner").as_deref(), Some("gitleaks"));
+        assert_eq!(gate::command_tool("RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps").as_deref(), Some("cargo"));
+        assert_eq!(gate::command_tool("cargo deny --all-features check").as_deref(), Some("cargo-deny"));
+        assert_eq!(gate::command_tool("cargo +nightly fmt").as_deref(), Some("cargo"));
+        assert_eq!(gate::command_tool("! grep -rn 'x y' templates/").as_deref(), Some("grep"));
+        assert_eq!(gate::command_tool("true"), None);
+    }
+
+    #[test]
+    fn test_gate_runs_ruleset_commands_fail_closed() {
+        let root = temp_root("gate_rs_cmds");
+        let stage = "  load_test:\n    active: true\n    command: \"true\"\n";
+        let mut g = gate_with_ruleset(&root, "\"exit 4\"", stage);
+        assert!(g.ruleset_error.is_none());
+        assert!(!g.run_all().unwrap());
+        assert_eq!(g.results.last().unwrap().1, gate::StageResult::Failed(4));
+
+        let mut g = gate_with_ruleset(&root, "aegis-no-such-tool --check", stage);
+        assert!(!g.run_all().unwrap());
+        assert!(matches!(g.results.last().unwrap().1, gate::StageResult::NotExecutable(_)));
+
+        let mut g = gate_with_ruleset(&root, "\"true\"", stage);
+        assert!(g.run_all().unwrap(), "{:?}", g.results);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_gate_rejects_broken_ruleset_setup() {
+        let root = temp_root("gate_rs_broken");
+        // referenced ruleset missing
+        let mut g = gate_with(&root, "profile: t\nrulesets: [doc/rules/missing.yaml]\ngate: {}\n");
+        assert!(g.ruleset_error.is_some());
+        assert!(!g.run_all().unwrap());
+        assert_eq!(g.results[0].0, "Rulesets");
+        // gate_commands for a stage that does not exist
+        write(&root, "doc/rules/t.yaml", "ruleset: t\ntoolchain:\n  gate_commands:\n    lnit: [\"true\"]\nrules: []\n");
+        let g = gate_with(&root, "profile: t\nrulesets: [doc/rules/t.yaml]\ngate: {}\n");
+        assert!(g.ruleset_error.as_deref().unwrap_or("").contains("lnit"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_gate_lint_runs_deviation_scan() {
+        let root = temp_root("gate_deviation");
+        let lint = "  lint:\n    active: true\n    command: \"true\"\n  traceability:\n    paths: [src]\n";
+        write(&root, "src/lib.rs", "#[allow(dead_code)]\nfn unused() {}\n");
+        let mut g = gate_with_ruleset(&root, "\"true\"", lint);
+        assert!(!g.run_all().unwrap(), "unmarked suppression must fail lint");
+
+        write(&root, "src/lib.rs", "// AEGIS-DEVIATION(RULE-T-002): wanted\n#[expect(dead_code, reason = \"x\")]\nfn unused() {}\n");
+        let mut g = gate_with_ruleset(&root, "\"true\"", lint);
+        assert!(!g.run_all().unwrap(), "forbidden rule cannot be deviated from");
+
+        write(&root, "src/lib.rs", "// AEGIS-DEVIATION(RULE-T-001): generated code\n#[expect(dead_code, reason = \"x\")]\nfn unused() {}\n");
+        let mut g = gate_with_ruleset(&root, "\"true\"", lint);
+        assert!(g.run_all().unwrap(), "{:?}", g.results);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_instructions_render_ruleset_marker_and_fence() {
+        let root = temp_root("instr_rs");
+        write(&root, "doc/rules/t.yaml", "ruleset: t\nlanguage: rust\nrules:\n  - id: RULE-T-001\n    title: t\n    instruction: x\n    deviation: permitted\n    example_good: |\n      let x = 1;\n");
+        write(&root, "doc/profile.yaml", "profile: p\nlanguage: rust\nrulesets: [doc/rules/t.yaml]\n");
+        let out = instructions::synthesize_instructions(instructions::SynthesizeOptions {
+            root: root.clone(),
+            profile_path: None,
+            out: None,
+        })
+        .unwrap();
+        assert!(out.contains("`// AEGIS-DEVIATION(RULE-T-001): <justification>`"), "{}", out);
+        assert!(out.contains("```rust"));
+        // a profile referencing a missing ruleset is an error, not an empty section
+        write(&root, "doc/profile.yaml", "profile: p\nrulesets: [doc/rules/nope.yaml]\n");
+        assert!(instructions::synthesize_instructions(instructions::SynthesizeOptions {
+            root: root.clone(),
+            profile_path: None,
+            out: None,
+        })
+        .is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_init_web_profile_scaffolds_complete_setup() {
+        let root = temp_root("init_web");
+        init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false }).unwrap();
+        for f in ["clippy.toml", "deny.toml", "doc/profile.yaml", "doc/rules/rust-strict.yaml", "doc/rules/rust-service.yaml",
+                  "doc/rules/rust-web-enterprise.yaml", "doc/rules/workspace-lints.toml"] {
+            assert!(root.join(f).exists(), "{} missing", f);
+        }
+        let prof = profile::Profile::load_from_file(root.join("doc/profile.yaml")).unwrap();
+        assert_eq!(prof.profile, "web-enterprise");
+        let g = gate::GateRunner::new(root.clone(), prof);
+        assert!(g.ruleset_error.is_none(), "{:?}", g.ruleset_error);
+        assert_eq!(g.rulesets.len(), 3);
+        assert!(init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "java".into(), brownfield: false }).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1,49 +1,11 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
 use crate::profile::Profile;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleItem {
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub severity: Option<String>,
-    pub instruction: String,
-    #[serde(default)]
-    pub rationale: Option<String>,
-    #[serde(default)]
-    pub linter_check: Option<String>,
-    #[serde(default)]
-    pub legacy_id: Option<String>,
-    #[serde(default)]
-    pub enforcement: Option<String>,
-    #[serde(default)]
-    pub deviation: Option<String>,
-    #[serde(default)]
-    pub example_bad: Option<String>,
-    #[serde(default)]
-    pub example_good: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RulesetFile {
-    pub ruleset: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub standard: Option<String>,
-    #[serde(default)]
-    pub language: Option<String>,
-    #[serde(default)]
-    pub rules: Vec<RuleItem>,
-}
+use crate::rulesets;
 
 pub struct SynthesizeOptions {
     pub root: PathBuf,
@@ -65,8 +27,9 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
         }
     });
 
+    // Fail closed: an existing but invalid profile is an error, not "no profile".
     let profile = if prof_file.exists() {
-        Profile::load_from_file(&prof_file).ok()
+        Some(Profile::load_from_file(&prof_file)?)
     } else {
         None
     };
@@ -107,83 +70,48 @@ pub fn synthesize_instructions(opts: SynthesizeOptions) -> Result<String> {
 
     // Section 2: Strict Coding Rulesets
     out.push_str("## 2. Mandatory Language Rulesets\n\n");
-    let rules_dir = doc_dir.join("rules");
-    let mut loaded_rules: Vec<RuleItem> = Vec::new();
+    // Fail closed: missing, unreadable or unparsable rulesets are errors, never skipped.
+    let rulesets = rulesets::load_for_profile(&opts.root, profile.as_ref())?;
+    let mut rule_count = 0;
 
-    if rules_dir.exists() {
-        let mut ruleset_files = Vec::new();
-        if let Some(ref prof) = profile {
-            for r_rel in &prof.rulesets {
-                let full = opts.root.join(r_rel);
-                if full.exists() {
-                    ruleset_files.push(full);
-                }
+    for (_, rf) in &rulesets {
+        out.push_str(&format!("### Ruleset: {} ({})\n\n", rf.ruleset, rf.standard.as_deref().unwrap_or("Standard")));
+        let fence = rulesets::fence_language(rf.language.as_deref().or(profile.as_ref().and_then(|p| p.language.as_deref())));
+        for rule in &rf.rules {
+            rule_count += 1;
+            out.push_str(&format!("- **[{}] {}** (Severity: {})\n", rule.id, rule.title, rule.severity.as_deref().unwrap_or("error")));
+            out.push_str(&format!("  *Instruction:* {}\n", rule.instruction.trim()));
+            if let Some(ref rat) = rule.rationale {
+                out.push_str(&format!("  *Rationale:* {}\n", rat.trim()));
             }
-        }
-
-        if ruleset_files.is_empty() {
-            for entry in WalkDir::new(&rules_dir).into_iter().filter_map(|e| e.ok()) {
-                let p = entry.path();
-                if p.is_file() && (p.extension().and_then(|s| s.to_str()) == Some("yaml") || p.extension().and_then(|s| s.to_str()) == Some("yml")) {
-                    ruleset_files.push(p.to_path_buf());
-                }
+            match rule.deviation.as_deref() {
+                Some("permitted") => out.push_str(&format!(
+                    "  *Deviation:* only with `{}` directly above the statement or suppression attribute.\n",
+                    rf.marker_for(&rule.id)
+                )),
+                Some("forbidden") => out.push_str("  *Deviation:* forbidden.\n"),
+                _ => {}
             }
-        }
-
-        for rf_path in ruleset_files {
-            // Fail closed: an unreadable or unparsable ruleset must never be skipped silently.
-            let content = fs::read_to_string(&rf_path)
-                .with_context(|| format!("Failed to read ruleset {}", rf_path.display()))?;
-            {
-                let rf = serde_yaml::from_str::<RulesetFile>(&content)
-                    .with_context(|| format!("Failed to parse ruleset {}", rf_path.display()))?;
-                {
-                    out.push_str(&format!("### Ruleset: {} ({})\n\n", rf.ruleset, rf.standard.as_deref().unwrap_or("Standard")));
-                    let fence = match rf.language.as_deref().or(profile.as_ref().and_then(|p| p.language.as_deref())) {
-                        Some("c" | "c11") => "c",
-                        Some("cpp" | "cpp20" | "c++") => "cpp",
-                        Some(lang) => lang,
-                        None => "text",
-                    }
-                    .to_string();
-                    for rule in rf.rules {
-                        out.push_str(&format!("- **[{}] {}** (Severity: {})\n", rule.id, rule.title, rule.severity.as_deref().unwrap_or("error")));
-                        out.push_str(&format!("  *Instruction:* {}\n", rule.instruction.trim()));
-                        if let Some(ref rat) = rule.rationale {
-                            out.push_str(&format!("  *Rationale:* {}\n", rat.trim()));
-                        }
-                        if rule.deviation.as_deref() == Some("permitted") {
-                            out.push_str(&format!(
-                                "  *Deviation:* only with `/* AEGIS-DEVIATION({}): <justification> */` directly above the statement.\n",
-                                rule.id
-                            ));
-                        } else if rule.deviation.as_deref() == Some("forbidden") {
-                            out.push_str("  *Deviation:* forbidden.\n");
-                        }
-                        if let Some(ref bad) = rule.example_bad {
-                            out.push_str(&format!("\n  Do NOT write:\n\n  ```{}\n", fence));
-                            for line in bad.trim_end().lines() {
-                                out.push_str(&format!("  {}\n", line));
-                            }
-                            out.push_str("  ```\n");
-                        }
-                        if let Some(ref good) = rule.example_good {
-                            out.push_str(&format!("\n  Write instead:\n\n  ```{}\n", fence));
-                            for line in good.trim_end().lines() {
-                                out.push_str(&format!("  {}\n", line));
-                            }
-                            out.push_str("  ```\n");
-                        }
-                        out.push_str("\n");
-                        loaded_rules.push(rule);
-                    }
-                    out.push_str("\n");
+            if let Some(ref bad) = rule.example_bad {
+                out.push_str(&format!("\n  Do NOT write:\n\n  ```{}\n", fence));
+                for line in bad.trim_end().lines() {
+                    out.push_str(&format!("  {}\n", line));
                 }
+                out.push_str("  ```\n");
             }
+            if let Some(ref good) = rule.example_good {
+                out.push_str(&format!("\n  Write instead:\n\n  ```{}\n", fence));
+                for line in good.trim_end().lines() {
+                    out.push_str(&format!("  {}\n", line));
+                }
+                out.push_str("  ```\n");
+            }
+            out.push('\n');
         }
+        out.push('\n');
     }
 
-    if loaded_rules.is_empty() {
+    if rule_count == 0 {
         out.push_str("No explicit YAML rulesets configured. Follow standard clean code & safety principles.\n\n");
     }
 

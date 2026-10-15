@@ -17,6 +17,20 @@ const RULESET_CPP_STRICT: &str = include_str!("../../doc/rules/cpp-strict.yaml")
 const RULESET_CPP20_CORE: &str = include_str!("../../doc/rules/cpp20-core.yaml");
 const RULESET_JAVA_ENTERPRISE: &str = include_str!("../../doc/rules/java-enterprise.yaml");
 const RULESET_JAVA_GOOGLE: &str = include_str!("../../doc/rules/java-google-style.yaml");
+const RULESET_RUST_STRICT: &str = include_str!("../../doc/rules/rust-strict.yaml");
+const RULESET_RUST_SERVICE: &str = include_str!("../../doc/rules/rust-service.yaml");
+const RULESET_RUST_WEB: &str = include_str!("../../doc/rules/rust-web-enterprise.yaml");
+const PROFILE_WEB: &str = include_str!("../../doc/web-enterprise.yaml");
+const TEMPLATE_WEB_CLIPPY: &str = include_str!("../../templates/rust-web/clippy.toml");
+const TEMPLATE_RUST_DENY: &str = include_str!("../../templates/rust/deny.toml");
+const TEMPLATE_RUST_LINTS: &str = include_str!("../../templates/rust/workspace-lints.toml");
+
+fn write_if_missing(path: &Path, content: &str) -> Result<()> {
+    if !path.exists() {
+        fs::write(path, content).with_context(|| format!("Failed to write {}", path.display()))?;
+    }
+    Ok(())
+}
 
 pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
     let doc_dir = root.join("doc");
@@ -40,9 +54,26 @@ pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
 
     let lang = opts.lang.to_lowercase();
     let is_safety = opts.profile == "embedded-safety" || opts.profile == "safety";
+    let is_web = opts.profile == "web-enterprise" || opts.profile == "web";
+    if is_web && lang != "rust" {
+        anyhow::bail!("Profile web-enterprise is available for --lang rust only");
+    }
+
+    // 0. Web profile: complete Rust web setup (rulesets, profile, clippy/deny templates)
+    if is_web {
+        write_if_missing(&rules_dir.join("rust-strict.yaml"), RULESET_RUST_STRICT)?;
+        write_if_missing(&rules_dir.join("rust-service.yaml"), RULESET_RUST_SERVICE)?;
+        write_if_missing(&rules_dir.join("rust-web-enterprise.yaml"), RULESET_RUST_WEB)?;
+        write_if_missing(&doc_dir.join("profile.yaml"), PROFILE_WEB)?;
+        write_if_missing(&root.join("clippy.toml"), TEMPLATE_WEB_CLIPPY)?;
+        write_if_missing(&root.join("deny.toml"), TEMPLATE_RUST_DENY)?;
+        write_if_missing(&rules_dir.join("workspace-lints.toml"), TEMPLATE_RUST_LINTS)?;
+        fs::create_dir_all(doc_dir.join("privacy")).context("Failed to create doc/privacy")?;
+    }
 
     // 1. Copy Embedded Rulesets into target doc/rules/
     match lang.as_str() {
+        _ if is_web => {}
         "rust" => {
             let p = rules_dir.join("rust-safety.yaml");
             if !p.exists() {
@@ -430,6 +461,16 @@ Initial thoughts on technology stack, components, and protocol boundaries.
     println!("  Profile:   {}", doc_dir.join("profile.yaml").display().to_string().yellow());
     println!("  Ruleset:   {}", rules_dir.display().to_string().yellow());
     println!("  Gate script: {}", root.join("gate.sh").display().to_string().green());
+    if is_web {
+        println!();
+        println!("{}", "Web Profile Setup:".bold());
+        println!("  clippy.toml and deny.toml written to the repository root (if missing).");
+        println!(
+            "  Merge {} into the workspace Cargo.toml ([workspace.lints]).",
+            rules_dir.join("workspace-lints.toml").display().to_string().cyan()
+        );
+        println!("  Create doc/privacy/data-inventory.yaml with the first migration (RULE-RWE-071).");
+    }
     if opts.brownfield {
         println!();
         println!("{}", "Brownfield Migration Artifacts Created:".bold());

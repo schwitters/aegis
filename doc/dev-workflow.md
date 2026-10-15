@@ -228,3 +228,12 @@ Any external stage (1–4, 6–9) can be replaced by `gate.<stage>.command` (exi
 The process core remains invariant across projects. Domain-specific rigor is configured via `doc/<profile>.yaml`:
 - **Embedded Safety (`embedded-safety.yaml`)**: ASIL-D / ISO 26262, MISRA-C/Rust, no dynamic memory allocation, MC/DC coverage.
 - **Enterprise Backend (`enterprise.yaml`)**: High maintainability, compatibility, structured logging, branch coverage.
+- **Web Application (`web-enterprise.yaml`)**: Server-rendered Rust web apps (Axum, SQLx/SQLite, Askama, htmx), OWASP ASVS 5.0 L2 and GDPR; rulesets `rust-strict` + `rust-service` + `rust-web-enterprise`; two independent implementation reviews.
+- **Local-First (`local-first.yaml`)**: Desktop clients with an optional self-hosted server; privacy by architecture.
+
+### Rulesets in the Gate
+
+The gate loads every ruleset the profile lists (a missing or unparsable ruleset, or `toolchain.gate_commands` for an unknown stage, makes the gate red before any stage runs) and adds per stage, after the stage's own check passed:
+- **`toolchain.gate_commands.<stage>`** — extra commands (e.g. `cargo fmt --check`, template scans, gitleaks, SBOM). A command whose program is not installed makes the stage *not executable*; `cargo <sub>` requires the `cargo-<sub>` plugin.
+- **`toolchain.clippy.flags`** — appended to `cargo clippy ... -- -D warnings`.
+- **Deviation scan (lint stage)** — when a ruleset declares a `deviation_policy`: every suppression (`#[allow]`/`#[expect]`, `NOLINT`, `@SuppressWarnings`, `# noqa`, ...) must sit directly below an `AEGIS-DEVIATION(<RULE-ID>): <justification>` marker naming a rule with `deviation: permitted`.

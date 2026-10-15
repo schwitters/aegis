@@ -109,7 +109,7 @@ flowchart TD
 | **Superficial Tests** | Coverage proves execution, not detection. | `mutation` stage with a minimum mutation score; surviving mutants are input to the final review. |
 | **Silent Spec Drift** | A requirement edit leaves tests and code silently outdated. | Approved baseline; changed artifacts are `UNREVIEWED`, their downstream links `SUSPECT` until re-baselined. |
 | **Lost Review Rationale** | Findings vanish with the chat session. | Review records in `doc/reviews/` with mandatory dispositions; gate enforces independent approvals. |
-| **Runaway Agent Loops** | Weak models iterate indefinitely or "fix" by suppression. | `agent_loop.max_iterations`, mandatory escalation report; suppressions only with permitted `AEGIS-DEVIATION` markers, audited in the final review. |
+| **Runaway Agent Loops** | Weak models iterate indefinitely or "fix" by suppression. | `agent_loop.max_iterations`, mandatory escalation report; deviation scan in the lint stage (suppressions only with permitted `AEGIS-DEVIATION` markers), audited in the final review. |
 
 ---
 

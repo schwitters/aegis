@@ -38,8 +38,8 @@ toolchain:
     config_file: deny.toml
   gate_commands:
     lint:
-      - "! grep -rnE '\\|\\s*safe\\b' templates/ | grep -v 'SAFE-HTML:'"           # RULE-RWE-002
-      - "! grep -rnE 'hx-on|hx-vars|hx-vals=.js:' templates/"                               # RULE-RWE-042
+      - "! grep -rsnE '\\|\\s*safe\\b' templates/ | grep -v 'SAFE-HTML:'"           # RULE-RWE-002
+      - "! grep -rsnE 'hx-on|hx-vars|hx-vals=.js:' templates/"                               # RULE-RWE-042
     security:
       - gitleaks detect --no-banner --redact                                       # RULE-RWE-080
     deliverables:

@@ -246,11 +246,20 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
 
 pub const SOURCE_EXTENSIONS: [&str; 10] = ["py", "js", "ts", "go", "rs", "java", "c", "cpp", "h", "hpp"];
 
-/// All source files under the given directories, sorted. Missing directories are reported unless none is required.
+/// Build output, dependencies and VCS/tool folders are never scanned (they are not the project's source).
+pub fn is_skipped_dir(path: &Path) -> bool {
+    path.is_dir()
+        && matches!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("target" | "node_modules" | ".git" | ".hg" | ".svn" | "build" | "dist" | "vendor" | "mutants.out")
+        )
+}
+
+/// All source files under the given directories, sorted (build output and VCS folders skipped).
 pub fn source_files(src_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for src_dir in src_dirs {
-        for entry in WalkDir::new(src_dir).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(src_dir).into_iter().filter_entry(|e| !is_skipped_dir(e.path())).filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_file()
                 && path
