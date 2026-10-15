@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-pub const STAGES: [&str; 6] = ["spec", "requirements", "architecture", "usecases", "testplan", "implementation"];
+pub const STAGES: [&str; 7] = ["spec", "requirements", "architecture", "usecases", "testplan", "implementation", "documentation"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {

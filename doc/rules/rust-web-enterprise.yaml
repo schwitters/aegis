@@ -44,7 +44,11 @@ toolchain:
     security:
       - gitleaks detect --no-banner --redact                                       # RULE-RWE-080
     deliverables:
-      - cargo cyclonedx --format json                                              # RULE-RWE-081
+      - bash docs/collect-legal.sh       # RULE-RWE-081/-104: SBOM + third-party licenses into the operator handbook
+      - mkdocs build --strict --quiet -f docs/user/mkdocs.yml                      # RULE-RWE-100
+      - mkdocs build --strict --quiet -f docs/operator/mkdocs.yml                  # RULE-RWE-100
+      - mkdocs build --strict --quiet -f docs/technical/mkdocs.yml                 # RULE-RWE-100
+      - mkdocs build --strict --quiet -f docs/hosting/mkdocs.yml                   # RULE-RWE-100
 
 deviation_policy:
   marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
@@ -712,7 +716,7 @@ rules:
     rationale: Known vulnerabilities and unexpected sources are detected fail-closed; the SBOM is a delivery artefact.
     checks:
       - { tool: cargo-deny, check: "check (advisories, licenses, bans, sources)" }
-      - { tool: gate-script, check: "cargo cyclonedx (toolchain.gate_commands.deliverables)" }
+      - { tool: gate-script, check: "docs/collect-legal.sh: cargo cyclonedx (toolchain.gate_commands.deliverables)" }
     linter_check: "cargo-deny:check, gate-script:cargo-cyclonedx"
     references:
       asvs: ["v5.0.0-15.1.1", "v5.0.0-15.1.2", "v5.0.0-15.2.1"]
@@ -795,3 +799,102 @@ rules:
     checks:
       - { tool: test, check: "openapi_contract_matches_implementation" }
     linter_check: "test:openapi_contract_matches_implementation"
+
+  # ---------------------------------------------------------------- Delivered documentation
+  - id: RULE-RWE-100
+    title: Four Audience-Separated Handbooks as Separate MkDocs Sites
+    category: documentation
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      The product ships four handbooks, each a separate MkDocs (Material) site with its own mkdocs.yml, navigation,
+      search index and PDF: docs/user (end users), docs/operator (application administrators: tenant and user
+      management, settings, audit, licenses), docs/technical (architecture, integration, API, data model) and
+      docs/hosting (installation, configuration, TLS/reverse proxy, backup/restore, upgrade, monitoring). Language is
+      English; the user handbook may add a German edition (mkdocs-static-i18n, suffix structure: page.de.md). Content
+      is written for its audience only — no cross-links from the user handbook into the operator, technical or
+      hosting handbooks. Every site builds with `mkdocs build --strict` (broken links and missing pages fail the
+      gate). PDFs are produced per handbook by printing the print-site page with headless Chromium
+      (docs/build.sh). MkDocs stays on 1.x (mkdocs>=1.6,<2): 2.0 removes the plugin system the handbooks rely on.
+    rationale: Separate sites keep administrative and infrastructure knowledge out of the end users' search index and PDFs, and let each audience get a coherent book.
+    checks:
+      - { tool: gate-script, check: "mkdocs build --strict per handbook (toolchain.gate_commands.deliverables)" }
+
+  - id: RULE-RWE-101
+    title: Help Served by the Application, Admin Help Only for Admins
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: permitted
+    instruction: >
+      The server crate serves the built user handbook under /help and the operator handbook under /admin-help as
+      static files (tower-http ServeDir from configured directories, packaged with the release). /help requires an
+      authenticated session unless the project lists it in public_routes (RULE-RWE-021). /admin-help and everything
+      below it (pages, search index, assets) require the administrator role through the same extractor as the admin
+      UI; other users get 404, not 403, and the user UI shows the link only to administrators. The technical and
+      hosting handbooks are not served by the application (they describe the infrastructure); they ship as PDF/HTML
+      artefacts. Help pages get their own CSP: the strict policy of RULE-RWE-042 plus exactly the script/style hashes
+      computed at build time (`aegis docs csp-hashes --site docs/<handbook>/site` -> csp-hashes.json), never
+      'unsafe-inline' for scripts. If the theme needs inline style attributes, style-src-attr 'unsafe-inline' on the
+      help paths only is the permitted deviation.
+    rationale: Admin documentation describes privileged functions and must not be an information source for other users; help pages must not weaken the CSP.
+    checks:
+      - { tool: test, check: "admin_help_requires_admin_role (non-admin gets 404 for pages and search index)" }
+      - { tool: test, check: "help_csp_uses_build_hashes" }
+    linter_check: "test:admin_help_requires_admin_role, test:help_csp_uses_build_hashes"
+    references:
+      asvs: ["v5.0.0-8.2.1"]
+
+  - id: RULE-RWE-102
+    title: Documentation Is Traced, Generated Where Possible
+    category: documentation
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Every use case declares its handbook (`audience: user | operator | none` in the UC metadata, default user) and
+      is documented by at least one page of that handbook carrying `documents: [UC-xxx]` (optionally REQ-xxx) in its
+      frontmatter; `aegis trace` reports undocumented use cases as GAP and marks pages SUSPECT when a documented
+      artifact changes. Parts with a machine-readable source are generated, never written by hand: the API reference
+      from openapi/<project>-openapi.yaml, the configuration reference from the server's configuration struct
+      (a test fails when a key is missing from docs/hosting), the data protection chapter from
+      doc/privacy/data-inventory.yaml, the license page from cargo-about (RULE-RWE-104).
+    rationale: Documentation drifts unless it is checked like code; generated parts cannot drift.
+    checks:
+      - { tool: gate-script, check: "aegis trace (UC audience coverage, SUSPECT pages)" }
+      - { tool: test, check: "config_keys_documented" }
+    linter_check: "aegis:trace, test:config_keys_documented"
+
+  - id: RULE-RWE-103
+    title: Privacy-Clean Documentation
+    category: privacy
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      Handbooks load nothing from third parties: Material's Google Fonts are disabled (theme.font: false), no
+      analytics, no external images or embeds. Screenshots and examples use synthetic data only (no real names,
+      e-mail addresses, tenant names or IDs from production), contain no secrets, tokens or internal hostnames, and
+      the hosting handbook uses placeholders for every credential.
+    rationale: Help pages are delivered to every user's browser; screenshots are a common source of personal data and secret leaks.
+    references:
+      gdpr: ["Art. 5(1)(c)", "Art. 25", "Art. 44 ff."]
+
+  - id: RULE-RWE-104
+    title: SBOM and Third-Party Licenses for Administrators
+    category: build
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      Every release generates the CycloneDX SBOM (RULE-RWE-081) and a third-party license page with cargo-about
+      (about.toml accepts the same licenses as deny.toml). The operator handbook contains both under
+      legal/: the generated license page and the SBOM as a download, so administrators see them under /admin-help.
+      Code that is shipped to browsers (JS/WASM bundles, fonts, icons) is distributed to every user: its license
+      notices are additionally reachable for all users (e.g. /help/legal or a third-party-notices file next to the
+      bundle). Products delivered for on-premise hosting include all notices in the delivered package.
+    rationale: Attribution and license texts are obligations of most open-source licenses; the SBOM answers vulnerability and supply-chain questions of operators.
+    checks:
+      - { tool: gate-script, check: "docs/collect-legal.sh: cargo about generate + cargo cyclonedx (toolchain.gate_commands.deliverables)" }
+    linter_check: "gate-script:cargo-about, gate-script:cargo-cyclonedx"

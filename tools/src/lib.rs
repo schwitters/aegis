@@ -1,6 +1,7 @@
 pub mod architecture;
 pub mod baseline;
 pub mod deviation;
+pub mod docs;
 pub mod gate;
 pub mod impact;
 pub mod init;
@@ -586,6 +587,85 @@ rules:\n  - id: RULE-T-001\n    title: ok to deviate\n    instruction: x\n    de
         let problems = architecture::check(&meta, &cfg.layers, &cfg.restricted);
         assert!(problems.is_empty(), "{:#?}", problems);
         assert_eq!(meta["packages"].as_array().unwrap().len(), 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_documentation_coverage_and_suspect_pages() {
+        let root = temp_root("docs_cov");
+        full_chain(&root);
+        write(&root, "doc/usecases/UC-002.md", "---\nid: UC-002\nimplements: [REQ-001]\naudience: operator\n---\n");
+        write(&root, "doc/usecases/UC-003.md", "---\nid: UC-003\nimplements: [REQ-001]\naudience: none\n---\n");
+        write(&root, "doc/usecases/UC-004.md", "---\nid: UC-004\nimplements: [REQ-001]\naudience: admins\n---\n");
+        write(&root, "docs/user/content/login.md", "---\ndocuments: [UC-001, UC-002]\n---\n# Login\n");
+        write(&root, "docs/user/site/ignored.md", "---\ndocuments: [UC-999]\n---\n");
+        write(&root, "docs/user/content/broken.md", "---\ndocuments: [UC-001\n---\n");
+        write(&root, "docs/operator/content/x.md", "---\ndocuments: [UC-404]\n---\n");
+        write(&root, "docs/manuals/content/y.md", "# wrong handbook\n");
+        let (mut trace, _) = trace_of(&root);
+        traceability::collect_documentation(&root.join("docs"), &mut trace).unwrap();
+        let (rows, _, _) = traceability::build_rows(&trace);
+        let problems = traceability::find_problems(&trace, &rows);
+        let has = |needle: &str| problems.iter().any(|p| p.contains(needle));
+        // UC-002 is documented, but only in the user handbook: it belongs to the operator handbook
+        assert!(has("UC-002: not documented in the operator handbook"), "{:#?}", problems);
+        assert!(!has("UC-001: not documented"));
+        assert!(!has("UC-003"), "audience none needs no page");
+        assert!(has("UC-004: audience `admins`"));
+        assert!(has("broken.md: invalid YAML frontmatter"));
+        assert!(has("ORPHAN   UC-404: documented in"));
+        assert!(has("unknown handbook `manuals`"));
+        assert!(!has("UC-999"), "build output must be skipped");
+
+        // a changed use case marks its documentation pages SUSPECT
+        let b = baseline::Baseline { approved_by: None, approved_at: None, artifacts: baseline::current(&root, &trace).unwrap() };
+        write(&root, "doc/usecases/UC-001.md", "---\nid: UC-001\nimplements: [REQ-001]\n---\nchanged\n");
+        let (mut trace, _) = trace_of(&root);
+        traceability::collect_documentation(&root.join("docs"), &mut trace).unwrap();
+        let d = baseline::diff(&b, &baseline::current(&root, &trace).unwrap());
+        let suspects = baseline::check(&trace, &d);
+        assert!(suspects.iter().any(|p| p.contains("login.md: documents UC-001")), "{:#?}", suspects);
+        let blast = impact::compute_impact(&trace, &["UC-001".to_string()], None, &format!("{}/", root.display()));
+        assert_eq!(blast.documentation, vec!["docs/user/content/login.md".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_docs_csp_hashes() {
+        // SHA-256("abc") in base64, the standard test vector
+        use sha2::Digest;
+        assert_eq!(docs::base64(&sha2::Sha256::digest(b"abc")), "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=");
+        assert_eq!(docs::base64(b"a"), "YQ==");
+        assert_eq!(docs::base64(b"ab"), "YWI=");
+        let mut h = docs::CspHashes::default();
+        docs::scan_html(
+            "<script>var a=1;</script><script src=\"x.js\"></script><script id=\"__config\" type=\"application/json\">{}</script>\
+             <SCRIPT type=\"module\">import x</SCRIPT><style>p{}</style><p style=\"color:red\">x</p><scripts>no</scripts>",
+            &mut h,
+        );
+        assert_eq!(h.script.len(), 2, "{:?}", h.script);
+        assert_eq!(h.style.len(), 1);
+        assert_eq!(h.style_attributes, 1);
+        assert!(h.script.iter().all(|s| s.starts_with("'sha256-") && s.ends_with("='")));
+    }
+
+    #[test]
+    fn test_init_web_scaffolds_handbooks() {
+        let root = temp_root("init_docs");
+        init::run_init(&root, init::InitOptions { profile: "web-enterprise".into(), lang: "rust".into(), brownfield: false, name: Some("shop".into()) }).unwrap();
+        for book in traceability::HANDBOOKS {
+            let yml = std::fs::read_to_string(root.join(format!("docs/{}/mkdocs.yml", book))).unwrap();
+            let v: serde_yaml::Value = serde_yaml::from_str(&yml).unwrap();
+            assert!(v["site_name"].as_str().unwrap().starts_with("shop "));
+            assert_eq!(v["theme"]["font"], serde_yaml::Value::Bool(false), "no Google Fonts");
+            assert!(root.join(format!("docs/{}/content/index.md", book)).exists());
+        }
+        for f in ["docs/build.sh", "docs/collect-legal.sh", "docs/about.hbs", "docs/requirements.txt", "about.toml",
+                  "docs/operator/content/legal/index.md", "docs/technical/content/api.md"] {
+            assert!(root.join(f).exists(), "{} missing", f);
+        }
+        let legal = std::fs::read_to_string(root.join("docs/collect-legal.sh")).unwrap();
+        assert!(legal.contains("crates/shop-server/"), "slug substituted");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

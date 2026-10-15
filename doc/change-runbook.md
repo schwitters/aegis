@@ -74,7 +74,8 @@ The agent executes the plan, confirming at transition gates:
 8. **Update Agent Instructions** — `aegis instructions` (if language constraints, patterns or loop limits are affected).
 9. **Implementation Loop** — The implementation model works task by task with the fast gate (`aegis gate --only build,lint,test_freeze,tests`), bounded by `agent_loop.max_iterations`; unresolved tasks come back as escalation reports.
 10. **Full Gate** — `aegis gate --profile doc/<profile>.yaml --skip reviews` until green.
-11. **Final Review** — Blind parallel review of the *green* diff with Frontier models; record findings and dispositions (`aegis review create --stage implementation ...`). Accepted findings → back to 9.
+11. **Update Handbooks** — Pages listed under *Documentation* in the blast radius (and every `SUSPECT` page) are updated by the documentation agent and reviewed (stage `documentation`).
+11b. **Final Review** — Blind parallel review of the *green* diff with Frontier models; record findings and dispositions (`aegis review create --stage implementation ...`). Accepted findings → back to 9.
 12. **Acceptance Gate, Close Issue & Matrix Sync** — `aegis gate --profile doc/<profile>.yaml` (all stages), `aegis issue close ISSUE-xxxx`, `aegis trace --out doc/traceability.md`.
 
 ### Step 5 — Completion Report

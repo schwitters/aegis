@@ -784,6 +784,22 @@ impl GateRunner {
         if let Err(e) = traceability::collect_code(&src_dirs, &mut trace) {
             return StageResult::NotExecutable(format!("Failed to scan source code: {}", e));
         }
+        let docs_root = self.root.join(traceability::DOCS_DIR);
+        let docs_required = self
+            .profile
+            .get_stage_config("traceability")
+            .and_then(|c| c.documentation.as_deref())
+            == Some("required");
+        if docs_root.exists() {
+            if let Err(e) = traceability::collect_documentation(&docs_root, &mut trace) {
+                return StageResult::NotExecutable(format!("Failed to scan docs/: {}", e));
+            }
+        } else if docs_required {
+            trace.doc_errors.push(format!(
+                "INVALID  documentation required by profile, but {}/ does not exist",
+                traceability::DOCS_DIR
+            ));
+        }
 
         let (rows, _, _) = traceability::build_rows(&trace);
         let mut problems = traceability::find_problems(&trace, &rows);

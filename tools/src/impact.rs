@@ -10,6 +10,8 @@ pub struct BlastRadius {
     pub usecases: Vec<String>,
     pub tests: Vec<String>,
     pub code: Vec<String>,
+    #[serde(default)]
+    pub documentation: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,7 +128,15 @@ pub fn compute_impact(
         }
     }
 
+    let mut affected_docs = BTreeSet::new();
+    for id in seed_reqs.iter().chain(affected_uc.iter()) {
+        for (_, page) in trace.doc_refs.get(id).into_iter().flatten() {
+            affected_docs.insert(page.strip_prefix(root_str).unwrap_or(page).to_string());
+        }
+    }
+
     BlastRadius {
+        documentation: affected_docs.into_iter().collect(),
         requirements: seed_reqs.into_iter().collect(),
         architecture: affected_arch.into_iter().collect(),
         usecases: affected_uc.into_iter().collect(),
@@ -169,6 +179,7 @@ pub fn make_plan(kind: &str, depth: &str, _blast: &BlastRadius) -> Vec<String> {
     plan.push("Implementation loop by the implementation model (fast gate, bounded iterations, escalation)".to_string());
     plan.push("Run the full execution gate until green (`aegis gate --skip reviews`)".to_string());
     plan.push("Final review of the green diff with Frontier models — record findings (`aegis review create`)".to_string());
+    plan.push("Update affected handbook pages (`documents:`), review them (stage documentation)".to_string());
     plan.push("Run the acceptance gate (all stages incl. reviews); close issue".to_string());
 
     plan
@@ -189,6 +200,13 @@ pub fn render_report_text(kind: &str, depth: &str, blast: &BlastRadius, plan: &[
     out.push_str(&format!("- Architecture: {}\n", arch_str));
     out.push_str(&format!("- Usecases:     {}\n", uc_str));
     out.push_str(&format!("- Tests:        {}\n", test_str));
+
+    if !blast.documentation.is_empty() {
+        out.push_str("- Documentation:\n");
+        for d in &blast.documentation {
+            out.push_str(&format!("    - {}\n", d));
+        }
+    }
 
     if blast.code.is_empty() {
         out.push_str("- Code:         —\n");

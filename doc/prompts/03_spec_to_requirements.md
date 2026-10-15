@@ -96,6 +96,7 @@ File: `doc/usecases/UC-001.md`
 id: UC-001
 title: <Use Case Title>
 implements: [REQ-001, REQ-002]
+audience: user        # handbook that must document it: user | operator | none (internal/system use case)
 ---
 ```
 ## Actors & Preconditions

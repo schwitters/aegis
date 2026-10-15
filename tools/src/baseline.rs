@@ -147,6 +147,9 @@ pub fn check(trace: &Trace, d: &BaselineDiff) -> Vec<String> {
         for loc in code.into_iter().flatten() {
             problems.push(format!("SUSPECT  {}: annotates {}, which changed since baseline", loc, up));
         }
+        for (_, page) in trace.doc_refs.get(up).into_iter().flatten() {
+            problems.push(format!("SUSPECT  {}: documents {}, which changed since baseline", page, up));
+        }
     }
     problems
 }

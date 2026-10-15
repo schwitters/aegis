@@ -106,6 +106,7 @@ flowchart TD
 7. **Domain Profiles & 3-Tier Rulesets**
    - Declarative domain tailoring via `doc/embedded-safety.yaml` (ASIL-D / MC/DC), `doc/enterprise.yaml`, `doc/web-enterprise.yaml` (Rust web, ASVS L2, GDPR) and `doc/local-first.yaml`.
    - The gate executes the rulesets' toolchain commands and a deviation scan: suppressions only with permitted `AEGIS-DEVIATION` markers.
+   - Handbooks: `docs/{user,operator,technical,hosting}` as separate MkDocs sites (HTML + PDF); user help under `/help`, admin help (incl. SBOM and third-party licenses) under `/admin-help` for administrators only; use-case documentation coverage is traced.
    - Rust workspaces: the `architecture` stage enforces the layer policy on the crate graph (`aegis init --profile web-enterprise --name <project>` scaffolds domain / application / storage / api / server crates).
    - Decoupled, reusable rulesets for C11, C++, Rust, and Java operating across prompt instructions, review rubrics, and SAST linters.
 

@@ -15,8 +15,9 @@ A standardized collection of copy-pasteable prompt templates for orchestrating t
 | **6. Implementation Loop** | [`06_27b_implementation.md`](06_27b_implementation.md) | Local 27B Model in an agent harness | Production code with `@implements`; escalation reports |
 | — Full Gate | `aegis gate --skip reviews` | Deterministic | Green working tree |
 | **7. Final Review** | [`07_final_review.md`](07_final_review.md) | Frontier Model B | Review record of the green diff, then acceptance gate (`aegis gate`) |
+| **8. Handbooks** | [`08_documentation.md`](08_documentation.md) | Documentation agent (per handbook) | `docs/<handbook>/content/*.md` with `documents:`; review stage `documentation` |
 
-Every review (stages 2, 3, 4, 4b, 7) is persisted as `doc/reviews/REVIEW-xxxx.md` with dispositioned findings (`aegis review create`).
+Every review (stages 2, 3, 4, 4b, 7, 8) is persisted as `doc/reviews/REVIEW-xxxx.md` with dispositioned findings (`aegis review create`).
 
 ---
 

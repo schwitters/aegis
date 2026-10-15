@@ -13,6 +13,8 @@
 # Project setup (aegis init --profile web-enterprise --lang rust --name <project> creates these):
 #   Cargo.toml + crates/<project>-{domain,application,storage,api,server}, tests/, migrations/, openapi/
 #               (layered workspace; the layer policy is gate.architecture below)
+#   docs/{user,operator,technical,hosting}/  four MkDocs sites (RULE-RWE-100), docs/build.sh (HTML + PDF),
+#   docs/collect-legal.sh + about.toml (SBOM and third-party licenses for /admin-help, RULE-RWE-104)
 #   clippy.toml  <- templates/rust-web/clippy.toml     (one per workspace, superset of the rust template)
 #   deny.toml    <- templates/rust/deny.toml           (bans openssl/native-tls, license policy)
 #   Cargo.toml   <- templates/rust/workspace-lints.toml ([workspace.lints]: unwrap_used, disallowed_methods, ...)
@@ -105,12 +107,13 @@ gate:
     bidirectional: false
     paths: [crates, tests]
     baseline: required           # approved doc/baseline.lock; changed REQs mark downstream links SUSPECT
+    documentation: required      # docs/<handbook>/: every UC documented in the handbook of its audience
   deliverables:
-    active: true                 # + SBOM via rust-web-enterprise toolchain.gate_commands.deliverables
+    active: true                 # + SBOM, licenses and the four handbooks via rust-web-enterprise toolchain.gate_commands
   reviews:
     active: true
     # Security-relevant: two independent reviewers for architecture and for the implementation.
-    required: [spec, requirements, "architecture:2", testplan, "implementation:2"]
+    required: [spec, requirements, "architecture:2", testplan, "implementation:2", documentation]
 
 # --- 2b. Implementation Loop (see doc/prompts/06_27b_implementation.md) -------
 agent_loop:
@@ -127,7 +130,11 @@ deliverables:
   - records_of_processing        # GDPR Art. 30, derived from the data inventory
   - privacy_notice               # what is processed, purposes, retention, data subject rights
   - security_test_report         # ASVS L2 verification: requirement -> test mapping (traceability matrix)
-  - dependency_license_report
+  - user_manual                  # docs/user: HTML under /help (+ optional German edition) and PDF
+  - operator_manual              # docs/operator: HTML under /admin-help (admins only) and PDF; incl. SBOM + licenses
+  - technical_manual             # docs/technical: architecture, integration, API reference (from OpenAPI); PDF/HTML
+  - hosting_manual               # docs/hosting: installation, configuration reference, backup, upgrade; PDF/HTML
+  - third_party_notices          # cargo-about license page; browser-delivered code notices reachable for all users
   - coverage_report
   - traceability_matrix
   - operations_guide             # backup/restore (incl. encrypted replicas), key rotation, incident response

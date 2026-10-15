@@ -19,7 +19,19 @@ pub struct Trace {
     pub artifacts: BTreeMap<String, PathBuf>,
     /// Structural defects found while reading docs or code. Never skipped silently.
     pub doc_errors: Vec<String>,
+    /// UC-ID -> handbook that must document it: user | operator | none (default: user)
+    pub uc_audience: BTreeMap<String, String>,
+    /// Artifact ID -> handbook pages documenting it (`documents:` frontmatter), as (audience, file)
+    pub doc_refs: BTreeMap<String, Vec<(String, String)>>,
+    /// True once a documentation tree was scanned: only then is UC documentation coverage enforced
+    pub documentation_scanned: bool,
 }
+
+/// Root of the delivered documentation (one MkDocs site per handbook); `doc/` holds the process artifacts.
+pub const DOCS_DIR: &str = "docs";
+
+/// Handbooks (first directory level under the documentation root, one MkDocs site each).
+pub const HANDBOOKS: [&str; 4] = ["user", "operator", "technical", "hosting"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceRow {
@@ -232,6 +244,18 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
                 }
                 "UC-" => {
                     let impls = id_list(&map, "implements", &mut trace.doc_errors, &id_val);
+                    let audience = map
+                        .get(serde_yaml::Value::String("audience".to_string()))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("user")
+                        .to_string();
+                    if !matches!(audience.as_str(), "user" | "operator" | "none") {
+                        trace.doc_errors.push(format!(
+                            "INVALID  {}: audience `{}` (allowed: user, operator, none)",
+                            id_val, audience
+                        ));
+                    }
+                    trace.uc_audience.insert(id_val.clone(), audience);
                     trace.uc_implements.insert(id_val, impls);
                 }
                 _ => {
@@ -239,6 +263,65 @@ pub fn collect_docs(doc_dir: &Path, trace: &mut Trace) -> Result<()> {
                     trace.test_verifies.insert(id_val, verifs);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Scans the handbooks under `docs_root` (`<root>/<handbook>/**/*.md`, build output skipped) for `documents:`
+/// frontmatter. Pages without frontmatter are fine; malformed frontmatter and unknown handbooks are errors.
+pub fn collect_documentation(docs_root: &Path, trace: &mut Trace) -> Result<()> {
+    trace.documentation_scanned = true;
+    let mut files: Vec<PathBuf> = WalkDir::new(docs_root)
+        .into_iter()
+        .filter_entry(|e| {
+            !is_skipped_dir(e.path()) && !(e.path().is_dir() && e.file_name().to_str() == Some("site"))
+        })
+        .filter_map(|e| e.ok())
+        .map(|e| e.into_path())
+        .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md"))
+        .collect();
+    files.sort();
+    for path in files {
+        let shown = path.display().to_string();
+        let rel = path.strip_prefix(docs_root).unwrap_or(&path);
+        let Some(handbook) = rel.components().next().and_then(|c| c.as_os_str().to_str()).map(String::from) else {
+            continue;
+        };
+        if rel.components().count() < 2 {
+            continue; // files directly under the docs root (e.g. a README) belong to no handbook
+        }
+        if !HANDBOOKS.contains(&handbook.as_str()) {
+            trace.doc_errors.push(format!(
+                "INVALID  {}: unknown handbook `{}` (allowed: {})",
+                shown,
+                handbook,
+                HANDBOOKS.join(", ")
+            ));
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c.replace("\r\n", "\n"),
+            Err(e) => {
+                trace.doc_errors.push(format!("INVALID  {}: unreadable ({})", shown, e));
+                continue;
+            }
+        };
+        let Some(rest) = content.strip_prefix("---\n") else { continue };
+        let Some(end) = rest.find("\n---") else {
+            trace.doc_errors.push(format!("INVALID  {}: unterminated YAML frontmatter", shown));
+            continue;
+        };
+        let map = match serde_yaml::from_str::<serde_yaml::Value>(&rest[..end]) {
+            Ok(serde_yaml::Value::Mapping(m)) => m,
+            Ok(_) => continue,
+            Err(e) => {
+                trace.doc_errors.push(format!("INVALID  {}: invalid YAML frontmatter: {}", shown, e));
+                continue;
+            }
+        };
+        for id in id_list(&map, "documents", &mut trace.doc_errors, &shown) {
+            trace.doc_refs.entry(id).or_default().push((handbook.clone(), shown.clone()));
         }
     }
     Ok(())
@@ -456,7 +539,33 @@ pub fn find_problems(trace: &Trace, rows: &[TraceRow]) -> Vec<String> {
         check_refs(&mut problems, t, ids, &["REQ-", "ARCH-"]);
     }
 
-    // 4. Orphaned @verifies in code
+    // 4. Documentation coverage: every UC in the handbook of its audience; `documents:` only to known artifacts
+    if trace.documentation_scanned {
+        for (uc, audience) in &trace.uc_audience {
+            if audience == "none" {
+                continue;
+            }
+            let documented = trace
+                .doc_refs
+                .get(uc)
+                .map(|pages| pages.iter().any(|(h, _)| h == audience))
+                .unwrap_or(false);
+            if !documented {
+                problems.push(format!(
+                    "GAP      {}: not documented in the {} handbook (page with `documents: [{}]`)",
+                    uc, audience, uc
+                ));
+            }
+        }
+        for (id, pages) in &trace.doc_refs {
+            if !trace.artifacts.contains_key(id) {
+                let page = pages.first().map(|(_, f)| f.as_str()).unwrap_or("unknown");
+                problems.push(format!("ORPHAN   {}: documented in {}, but not defined", id, page));
+            }
+        }
+    }
+
+    // 5. Orphaned @verifies in code
     for (t, locs) in &trace.test_annot {
         if !known_tests.contains(t) {
             let loc = locs.first().map(|s| s.as_str()).unwrap_or("unknown");

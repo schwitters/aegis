@@ -85,6 +85,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: TestsCommands,
     },
+    /// Delivered documentation (docs/: one MkDocs site per handbook)
+    Docs {
+        #[command(subcommand)]
+        cmd: DocsCommands,
+    },
     /// Review records with findings and dispositions (doc/reviews/)
     Review {
         #[command(subcommand)]
@@ -150,6 +155,16 @@ enum TestsCommands {
         /// Take the source roots from the profile (gate.traceability.paths) instead of --src
         #[arg(long)]
         profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DocsCommands {
+    /// SHA-256 CSP sources for the inline scripts/styles of a built site; writes <site>/csp-hashes.json
+    CspHashes {
+        /// Built MkDocs site directory, e.g. docs/user/site
+        #[arg(long)]
+        site: String,
     },
 }
 
@@ -304,6 +319,10 @@ fn main() -> Result<()> {
             let mut trace = Trace::default();
             traceability::collect_docs(&doc_path, &mut trace)?;
             traceability::collect_code(&src_paths, &mut trace)?;
+            let docs_root = root_path.join(traceability::DOCS_DIR);
+            if docs_root.exists() {
+                traceability::collect_documentation(&docs_root, &mut trace)?;
+            }
 
             let (rows, _, _) = traceability::build_rows(&trace);
             let mut problems = traceability::find_problems(&trace, &rows);
@@ -358,6 +377,10 @@ fn main() -> Result<()> {
             let mut trace = Trace::default();
             traceability::collect_docs(&doc_path, &mut trace)?;
             traceability::collect_code(&src_paths, &mut trace)?;
+            let docs_root = root_path.join(traceability::DOCS_DIR);
+            if docs_root.exists() {
+                traceability::collect_documentation(&docs_root, &mut trace)?;
+            }
 
             let mut target = target;
             if changed {
@@ -414,6 +437,10 @@ fn main() -> Result<()> {
 
             let mut trace = Trace::default();
             traceability::collect_docs(&doc_path, &mut trace)?;
+            let docs_root = root_path.join(traceability::DOCS_DIR);
+            if docs_root.exists() {
+                traceability::collect_documentation(&docs_root, &mut trace)?;
+            }
             let (rows, _, _) = traceability::build_rows(&trace);
             let blocking = baseline::blocking_for_approval(&traceability::find_problems(&trace, &rows));
 
@@ -488,6 +515,27 @@ fn main() -> Result<()> {
                         println!("{}", p);
                     }
                     exit(1);
+                }
+            }
+        },
+        Commands::Docs { cmd } => match cmd {
+            DocsCommands::CspHashes { site } => {
+                let site_path = PathBuf::from(&site);
+                let hashes = aegis::docs::csp_hashes(&site_path)?;
+                let out = site_path.join("csp-hashes.json");
+                std::fs::write(&out, serde_json::to_string_pretty(&hashes)?)?;
+                println!(
+                    "✔ {} script / {} style hash(es) from {} page(s) -> {}",
+                    hashes.script.len(),
+                    hashes.style.len(),
+                    hashes.pages,
+                    out.display()
+                );
+                if hashes.style_attributes > 0 {
+                    println!(
+                        "  ! {} inline style attribute(s): they need style-src-attr 'unsafe-inline' (deviation RULE-RWE-101)",
+                        hashes.style_attributes
+                    );
                 }
             }
         },
