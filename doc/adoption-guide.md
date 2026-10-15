@@ -34,7 +34,7 @@ aegis init --profile enterprise --lang rust
 # For safety-critical firmware (C11, Embedded Rust, ASIL-D):
 aegis init --profile embedded-safety --lang c
 
-# For server-rendered Rust web applications (Axum, SQLx, Askama, htmx; ASVS L2, GDPR):
+# For web applications with a Rust backend (Axum, SQLx; server-rendered, htmx or SPA/PWA frontend; ASVS L2, GDPR):
 # also writes clippy.toml and deny.toml to the repository root and doc/rules/workspace-lints.toml
 aegis init --profile web-enterprise --lang rust
 ```

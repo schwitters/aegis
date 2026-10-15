@@ -1,0 +1,96 @@
+# Ruleset: htmx Frontends (optional overlay)
+# Schema v2. Layered on top of rust-web-enterprise.yaml (which requires rust-strict.yaml and rust-service.yaml); add it
+# to the profile's `rulesets:` only when the frontend uses htmx. IDs RULE-RWH-*.
+#
+# Scope: server-rendered pages (Askama) enhanced with htmx: fragments swapped into the page, history handling and
+# response headers that steer the client (HX-Redirect, HX-Trigger, ...).
+
+ruleset: rust-web-htmx
+schema_version: 2
+id_prefix: RULE-RWH
+description: >
+  CSP-compatible, privacy-preserving use of htmx on top of rust-web-enterprise.yaml: no eval-based features, no
+  history snapshots in localStorage, cache-correct fragment responses and validated client-steering headers.
+standard: "htmx 2.x; OWASP ASVS 5.0.0 (L2)"
+language: rust
+
+toolchain:
+  gate_commands:
+    lint:
+      - "! grep -rsnE 'hx-on|hx-vars|hx-vals=.js:' templates/"                     # RULE-RWH-001
+
+deviation_policy:
+  marker: "// AEGIS-DEVIATION(<RULE-ID>): <justification>"
+  placement: on the line directly above the suppression attribute or deviating statement
+  review: every deviation is listed in the review rubric and must be confirmed by a frontier reviewer
+
+rules:
+  - id: RULE-RWH-001
+    title: CSP-Compatible htmx Configuration
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      htmx is self-hosted (pinned version from the build output) and configured in the base layout via
+      <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"historyCacheSize":0}'>.
+      hx-on*, hx-vars and js: expressions in hx-vals are forbidden — they need unsafe-eval, which the CSP of
+      RULE-RWE-042 never allows. Client-side behaviour beyond htmx attributes lives in self-hosted script files.
+    rationale: Keeps the strict CSP intact; htmx's eval-based features would silently require weakening it.
+    checks:
+      - { tool: template-scan, check: "hx-on|hx-vars|js: in templates/ (toolchain.gate_commands.lint)" }
+      - { tool: test, check: "htmx_config_csp_compatible" }
+    linter_check: "gate-script:grep hx-on templates/, test:htmx_config_csp_compatible"
+    example_bad: |
+      <button hx-post="/items/{{ id }}/archive" hx-on:htmx:after-request="alert('done')">Archive</button>
+    example_good: |
+      <button hx-post="/items/{{ id }}/archive" hx-target="#item-{{ id }}" hx-swap="outerHTML">Archive</button>
+
+  - id: RULE-RWH-002
+    title: No History Snapshots in Browser Storage
+    category: privacy
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      htmx stores page snapshots in localStorage for its history cache, which would put rendered personal data into
+      script-accessible storage (RULE-RWE-043). Disable it application-wide ("historyCacheSize":0, RULE-RWH-001);
+      if a project needs the cache for public pages, set hx-history="false" on every authenticated page and test it.
+    rationale: Rendered pages contain personal data; localStorage survives logout and is readable by injected scripts.
+    checks:
+      - { tool: test, check: "htmx_history_cache_disabled" }
+    linter_check: "test:htmx_history_cache_disabled"
+    references:
+      asvs: ["v5.0.0-14.3.3"]
+      gdpr: ["Art. 5(1)(f)", "Art. 25"]
+
+  - id: RULE-RWH-003
+    title: Cache-Correct Fragment Responses
+    category: security
+    severity: error
+    enforcement: gate+review
+    deviation: forbidden
+    instruction: >
+      A route that answers htmx requests with a fragment and other requests with a full page sends Vary: HX-Request
+      (and Cache-Control per RULE-RWE-042). Fragment endpoints carry the same authorization extractor as their page
+      (RULE-RWE-021); a direct, non-htmx request to a fragment-only route returns the full page or 404, never a bare
+      fragment without layout and security headers.
+    rationale: Without Vary, caches and the back button serve fragments as pages (or pages as fragments); fragments are full routes for an attacker.
+    checks:
+      - { tool: test, check: "fragment_routes_send_vary_hx_request" }
+    linter_check: "test:fragment_routes_send_vary_hx_request"
+
+  - id: RULE-RWH-004
+    title: Validated Client-Steering Headers
+    category: security
+    severity: error
+    enforcement: review
+    deviation: forbidden
+    instruction: >
+      HX-Redirect, HX-Location and HX-Push-Url values pass the redirect validation of RULE-RWE-044. HX-Trigger
+      payloads are built with serde_json from typed structs, never by string concatenation with user data. Request
+      headers set by htmx (HX-Request, HX-Target, HX-Current-URL) are untrusted input: they may select a template
+      variant, never an authorization decision.
+    rationale: Response headers steer the client like redirects; request headers are attacker-controlled.
+    references:
+      asvs: ["v5.0.0-3.7.2"]

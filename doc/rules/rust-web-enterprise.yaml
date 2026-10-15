@@ -1,13 +1,14 @@
-# Ruleset: Server-Rendered Rust Web Applications (Axum, SQLx/SQLite, Askama, htmx)
+# Ruleset: Browser-Facing Rust Web Applications (Axum, SQLx/SQLite) — Frontend-Neutral
 # Schema v2 (field set of rust-strict.yaml). Layered on top of rust-strict.yaml AND rust-service.yaml: list all three
 # under `rulesets:` in the profile (rulesets are composed, not inherited; Aegis has no `extends`). Rules of the base
 # rulesets are referenced, not repeated (e.g. timeouts and body limits: RULE-RSV-003, secrets: RULE-RS-013,
 # fail-fast configuration: RULE-RSV-010, stable error contract: RULE-RSV-008, child processes: RULE-RS-021 —
 # tightened here by RULE-RWE-003).
 #
-# Scope: browser-facing web applications with server-side rendering and htmx, optionally multi-tenant, aligned with
-# OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design). Product-independent: domain limits, roles and tables are
-# defined by the project, not by this ruleset.
+# Scope: browser-facing web applications with a Rust backend, optionally multi-tenant, aligned with OWASP ASVS 5.0.0
+# Level 2 and the GDPR (privacy by design). Frontend-neutral: server-rendered pages (Askama), hypermedia (htmx — add
+# the overlay rust-web-htmx.yaml), single-page apps and PWAs (JSON API; frontend in TypeScript or Rust/WASM).
+# Product-independent: domain limits, roles and tables are defined by the project, not by this ruleset.
 #
 # Field extensions relative to rust-strict.yaml (ignored by `aegis instructions`, used by reviewers):
 #   references.asvs  ASVS IDs in the format v<version>-<chapter>.<section>.<req>
@@ -20,9 +21,10 @@ ruleset: rust-web-enterprise
 schema_version: 2
 id_prefix: RULE-RWE
 description: >
-  Server-rendered Rust web applications (Axum, SQLx/SQLite, Askama, htmx), optionally multi-tenant, aligned with
-  OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design). Product-independent: domain-specific limits, roles and
-  tables are defined by the project. Requires rust-strict.yaml and rust-service.yaml.
+  Browser-facing web applications with a Rust backend (Axum, SQLx/SQLite), optionally multi-tenant, aligned with
+  OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design). Frontend-neutral: server-rendered pages, htmx (overlay
+  rust-web-htmx.yaml), SPAs and PWAs. Product-independent: domain-specific limits, roles and tables are defined by
+  the project. Requires rust-strict.yaml and rust-service.yaml.
 standard: "OWASP ASVS 5.0.0 (L2); GDPR Art. 5, 15, 17, 20, 25, 32; ePrivacy Directive Art. 5(3) (e.g. TDDDG §25)"
 language: rust
 
@@ -39,7 +41,6 @@ toolchain:
   gate_commands:
     lint:
       - "! grep -rsnE '\\|\\s*safe\\b' templates/ | grep -v 'SAFE-HTML:'"           # RULE-RWE-002
-      - "! grep -rsnE 'hx-on|hx-vars|hx-vals=.js:' templates/"                               # RULE-RWE-042
     security:
       - gitleaks detect --no-banner --redact                                       # RULE-RWE-080
     deliverables:
@@ -91,20 +92,26 @@ rules:
       asvs: ["v5.0.0-1.2.4"]
 
   - id: RULE-RWE-002
-    title: HTML Only Through Askama With Auto-Escaping
+    title: Context-Aware Output Encoding on Server and Client
     category: security
     severity: error
     enforcement: gate+review
     deviation: permitted
     instruction: >
-      HTML is produced exclusively in Askama templates. No HTML in Rust strings, no format!-built HTML, no
-      Html(String) built from user data. The |safe filter is allowed only for constants from our own code, with a
-      `{# SAFE-HTML: <justification> #}` comment on the same line. Data for JavaScript only via the |json filter in
-      data-* attributes, never inside <script> blocks.
-    rationale: Context-aware output encoding prevents XSS.
+      Server-side HTML (pages, fragments, e-mails) is produced exclusively in Askama templates with auto-escaping:
+      no HTML in Rust strings, no format!-built HTML, no Html(String) built from user data. The |safe filter is
+      allowed only for constants from our own code, with a `{# SAFE-HTML: <justification> #}` comment on the same
+      line. Data for JavaScript only via the |json filter in data-* attributes, never inside <script> blocks.
+      JSON APIs serialize with serde and always send Content-Type: application/json; they never return HTML built
+      from data. Client-side frontends (SPA/PWA) render untrusted data only through text APIs or the framework's
+      escaping (textContent, JSX/template bindings, Leptos/Yew view macros); innerHTML, outerHTML,
+      insertAdjacentHTML, document.write, dangerouslySetInnerHTML, v-html and inner_html are allowed only on output
+      of a vetted sanitizer (e.g. DOMPurify) and with a deviation marker.
+    rationale: Context-aware output encoding prevents XSS, regardless of where the HTML is assembled.
     checks:
       - { tool: template-scan, check: "|safe without SAFE-HTML comment (toolchain.gate_commands.lint)" }
-    linter_check: "gate-script:grep |safe templates/"
+      - { tool: test, check: "api_responses_are_json" }
+    linter_check: "gate-script:grep |safe templates/, test:api_responses_are_json"
     references:
       asvs: ["v5.0.0-1.2.1", "v5.0.0-1.2.3", "v5.0.0-3.2.1"]
 
@@ -273,7 +280,8 @@ rules:
     instruction: >
       Function-level permissions are enforced through typed Axum extractors per role defined by the project, e.g.
       RequireRole<TenantAdmin>. A handler without such an extractor is public and must be listed in the public_routes
-      allowlist. htmx partial endpoints are routes like any other and carry the same extractor as their full page.
+      allowlist. Partial endpoints (HTML fragments, JSON endpoints used by a SPA/PWA) are routes like any other and
+      carry the same extractor as the page or feature they belong to.
     rationale: Default deny, mechanically verifiable (refines RULE-RSV-001 for browser sessions).
     checks:
       - { tool: test, check: "every_route_is_authorized_or_allowlisted" }
@@ -394,7 +402,8 @@ rules:
       State changes only via POST/PUT/PATCH/DELETE; GET and HEAD never change state. A middleware accepts a
       state-changing request only if Sec-Fetch-Site is `same-origin`, or — when Sec-Fetch-Site is absent — the Origin
       header equals the application's configured origin. Requests with neither header, with `Origin: null`, or with
-      a mismatching value are rejected with 403 (fail closed). This applies to htmx and plain form submissions alike.
+      a mismatching value are rejected with 403 (fail closed). This applies to every client alike: form submissions,
+      hypermedia requests and fetch/XHR calls from SPAs and PWAs.
     rationale: Defence against cross-site request forgery independent of SameSite cookie behaviour.
     checks:
       - { tool: test, check: "csrf_cross_origin_post_rejected" }
@@ -404,26 +413,25 @@ rules:
       asvs: ["v5.0.0-3.5.1", "v5.0.0-3.5.3"]
 
   - id: RULE-RWE-042
-    title: Security Headers, Strict CSP and CSP-Compatible htmx
+    title: Security Headers and a Strict Content Security Policy
     category: security
     severity: error
     enforcement: gate+review
     deviation: forbidden
     instruction: >
       A central tower-http layer sets on every response: Content-Security-Policy with default-src 'self',
-      script-src 'self', style-src 'self', object-src 'none', base-uri 'none', frame-ancestors 'none' and no
-      unsafe-inline/unsafe-eval; Strict-Transport-Security; X-Content-Type-Options: nosniff;
-      Referrer-Policy: strict-origin-when-cross-origin; Cache-Control: no-store for authenticated pages.
-      htmx and all assets are self-hosted. htmx is configured CSP-compatible via
-      <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>;
-      hx-on*, hx-vars and js: expressions are forbidden (they require unsafe-eval). Wildcard CORS is forbidden
-      (CorsLayer::permissive/very_permissive, cors::Any, AllowOrigin::any/mirror_request); same-origin apps need no
-      CORS layer at all.
-    rationale: Limits XSS impact, clickjacking and unintended data flows to third parties; a CSP weakened later "for htmx" protects nothing.
+      script-src 'self', style-src 'self', connect-src 'self', img-src 'self' data:, object-src 'none',
+      base-uri 'none', frame-ancestors 'none', form-action 'self', and — for PWAs — worker-src 'self' and
+      manifest-src 'self'; never unsafe-inline or unsafe-eval. Framework bootstrap scripts that must be inline use a
+      per-response nonce or a hash; Rust/WASM frontends may add 'wasm-unsafe-eval' to script-src (nothing else).
+      Also: Strict-Transport-Security; X-Content-Type-Options: nosniff; Referrer-Policy:
+      strict-origin-when-cross-origin; Cache-Control: no-store for authenticated responses. All frontend assets
+      (scripts, styles, fonts, WASM) are self-hosted from the build output. Wildcard CORS is forbidden
+      (CorsLayer::permissive/very_permissive, cors::Any, AllowOrigin::any/mirror_request); a same-origin frontend
+      needs no CORS layer at all, a separately hosted frontend gets an explicit origin list.
+    rationale: Limits XSS impact, clickjacking and unintended data flows to third parties; a CSP weakened later "for the frontend framework" protects nothing.
     checks:
       - { tool: test, check: "security_headers_on_all_routes" }
-      - { tool: test, check: "htmx_config_csp_compatible" }
-      - { tool: template-scan, check: "hx-on|hx-vars|js: in templates/ (toolchain.gate_commands.lint)" }
       - { tool: clippy, check: "clippy::disallowed_methods / disallowed_types (tower_http::cors wildcards)" }
     linter_check: "test:security_headers_on_all_routes, clippy::disallowed_methods, clippy::disallowed_types"
     references:
@@ -431,23 +439,28 @@ rules:
       gdpr: ["Art. 44 ff. (no transfers to third parties)", "ePrivacy Directive Art. 5(3)"]
 
   - id: RULE-RWE-043
-    title: No Sensitive Data in URLs or Browser Storage
+    title: No Secrets in URLs or Script-Accessible Storage; Offline Data Only by Design
     category: security
     severity: error
     enforcement: gate+review
     deviation: forbidden
     instruction: >
       Never put tokens, e-mail addresses or session IDs in query strings or paths (exception: single-use,
-      short-lived tokens per RULE-RWE-033). No application code writes user data to localStorage or sessionStorage.
-      htmx stores page snapshots in localStorage for its history cache: disable it for the whole application
-      ("historyCacheSize":0 in the htmx-config meta tag) or, at minimum, set hx-history="false" on every
-      authenticated page.
-    rationale: URLs end up in logs, browser history and Referer headers; browser storage survives logout on shared machines.
+      short-lived tokens per RULE-RWE-033). Session credentials live only in the HttpOnly session cookie
+      (RULE-RWE-040) — never in localStorage, sessionStorage, IndexedDB, the Cache API or JavaScript variables that
+      persist. Personal data may be stored in the browser (IndexedDB, Cache API / service-worker caches, web storage)
+      only for data categories marked `offline: true` in the data inventory (RULE-RWE-071), keyed per user, and it is
+      wiped on logout and on account switch: the logout response sends Clear-Site-Data: "cache", "storage" and the
+      client clears its stores. Service workers cache static assets freely, but authenticated responses only when
+      their category is offline-enabled; everything else is network-only.
+    rationale: URLs end up in logs, history and Referer headers; browser storage is readable by any injected script and survives logout on shared machines.
     checks:
-      - { tool: test, check: "htmx_history_cache_disabled" }
-    linter_check: "test:htmx_history_cache_disabled"
+      - { tool: test, check: "logout_sends_clear_site_data" }
+      - { tool: test, check: "offline_storage_only_for_inventory_offline_categories" }
+    linter_check: "test:logout_sends_clear_site_data, test:offline_storage_only_for_inventory_offline_categories"
     references:
-      asvs: ["v5.0.0-14.2.1", "v5.0.0-14.3.3"]
+      asvs: ["v5.0.0-14.2.1", "v5.0.0-14.3.1", "v5.0.0-14.3.3"]
+      gdpr: ["Art. 5(1)(c), (f)", "Art. 25"]
 
   - id: RULE-RWE-044
     title: No Open Redirects
@@ -456,7 +469,8 @@ rules:
     enforcement: gate+review
     deviation: forbidden
     instruction: >
-      Redirect targets taken from requests (e.g. ?next= after login, HX-Redirect values) are accepted only as
+      Redirect targets taken from requests (e.g. ?next= after login) or handed to clients (Location, HX-Redirect,
+      redirect fields in JSON responses) are accepted only as
       relative paths: they must start with a single "/", must not start with "//" or "/\", must not contain a scheme
       or backslashes, and are resolved against the application's own origin. Anything else redirects to a fixed
       default page.
@@ -497,8 +511,8 @@ rules:
     enforcement: gate+review
     deviation: forbidden
     instruction: >
-      A central AppError implements IntoResponse and renders a generic error page (or htmx fragment) with a
-      correlation ID only; details (SQL, paths, debug output) go to the log (refines RULE-RSV-008 for HTML). On
+      A central AppError implements IntoResponse and renders a generic error page, HTML fragment or, for API
+      requests, an RFC 9457 problem-details JSON — with a correlation ID only; details (SQL, paths, debug output) go to the log (refines RULE-RSV-008 for HTML). On
       errors in validation or calls to external systems, the action is aborted and never continued with default
       values (e.g. no price of 0 or default permission when a dependency is unavailable).
     rationale: No information leakage, no fail-open behaviour.
@@ -575,8 +589,9 @@ rules:
     deviation: forbidden
     instruction: >
       Every column of every table is classified in doc/privacy/data-inventory.yaml (public | internal | personal |
-      secret) with purpose, legal basis, retention rule and whether the table is tenant-scoped. A migration without a
-      matching inventory entry fails the gate.
+      secret) with purpose, legal basis, retention rule, whether the table is tenant-scoped and whether its data may
+      be stored on clients for offline use (`offline: true`, RULE-RWE-043). A migration without a matching inventory
+      entry fails the gate.
     rationale: Mechanically links the schema to the record of processing activities, the retention policy and tenant isolation.
     checks:
       - { tool: test, check: "data_inventory_matches_schema (PRAGMA table_info against the inventory)" }

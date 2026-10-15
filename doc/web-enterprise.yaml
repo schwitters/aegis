@@ -1,6 +1,13 @@
-# Profile: Server-Rendered Web Application (Rust: Axum, SQLx/SQLite, Askama, htmx)
+# Profile: Web Application with a Rust Backend (Axum, SQLx/SQLite) — any frontend
 # Browser-facing business application, optionally multi-tenant, processing personal data. No formal safety case;
 # security (OWASP ASVS 5.0 L2), privacy (GDPR) and operability are paramount.
+#
+# Frontend options (pick one, see `rulesets:` below):
+#   * server-rendered pages (Askama)          -> base rulesets only
+#   * htmx                                    -> + doc/rules/rust-web-htmx.yaml
+#   * SPA / PWA (TypeScript or Rust/WASM)     -> base rulesets only; add the frontend's build/lint/test to the gate
+#     (e.g. lint.command: "cargo clippy --all-targets --all-features -- -D warnings && npm run lint" — a command
+#     replaces the built-in check, so repeat it) and keep the PWA's offline data within RULE-RWE-043.
 #
 # Project setup (aegis init --profile web-enterprise --lang rust copies these):
 #   clippy.toml  <- templates/rust-web/clippy.toml     (one per workspace, superset of the rust template)
@@ -9,9 +16,9 @@
 
 profile: web-enterprise
 description: >
-  Server-rendered Rust web application (Axum, SQLx/SQLite, Askama, htmx) with session-based authentication,
-  optional multi-tenant isolation and personal data. Secure by default (ASVS 5.0 Level 2), privacy by design
-  (GDPR Art. 25), no third-party requests from the browser, fail-closed error handling.
+  Web application with a Rust backend (Axum, SQLx/SQLite) and a server-rendered, htmx or SPA/PWA frontend,
+  session-based authentication, optional multi-tenant isolation and personal data. Secure by default (ASVS 5.0
+  Level 2), privacy by design (GDPR Art. 25), no third-party requests from the browser, fail-closed error handling.
 rigor: none             # No safety integrity level; security & privacy reviews are mandatory instead
 language: rust
 
@@ -20,7 +27,8 @@ language: rust
 rulesets:
   - doc/rules/rust-strict.yaml            # language core (RULE-RS-*)
   - doc/rules/rust-service.yaml           # long-running service (RULE-RSV-*)
-  - doc/rules/rust-web-enterprise.yaml    # web, ASVS, GDPR (RULE-RWE-*)
+  - doc/rules/rust-web-enterprise.yaml    # web, ASVS, GDPR — frontend-neutral (RULE-RWE-*)
+  # - doc/rules/rust-web-htmx.yaml        # optional: htmx frontends (RULE-RWH-*)
 
 # --- 1. Quality Axes (ISO/IEC 25010:2023) ------------------------------------
 quality_axes:
@@ -28,7 +36,7 @@ quality_axes:
   security:               required      # ASVS L2: authN/MFA, sessions, CSRF, tenant isolation, CSP
   reliability:            required      # transactional state changes, graceful shutdown, fail-closed dependencies
   maintainability:        required
-  interaction_capability: required      # accessibility (WCAG 2.2 AA), progressive enhancement, keyboard use
+  interaction_capability: required      # accessibility (WCAG 2.2 AA), keyboard use; offline behaviour for PWAs
   performance_efficiency: recommended   # p95 page latency budgets from the non-functional requirements
   compatibility:          recommended   # evergreen browsers; versioned migrations
   flexibility:            recommended   # container or systemd deployment from one artefact
@@ -51,7 +59,8 @@ gate:
     active: true                 # tests are implemented + reviewed first, then frozen (aegis tests freeze)
   tests:
     active: true
-    levels: [unit, integration, http]   # http: router-level tests (tower::ServiceExt::oneshot) incl. security tests
+    levels: [unit, integration, http]   # http: router-level tests (tower::ServiceExt::oneshot) incl. security tests;
+                                        # SPA/PWA: add frontend unit + e2e tests (e.g. Playwright) via tests.command
   coverage:
     active: true
     metric: line                 # cargo-llvm-cov on stable
@@ -102,7 +111,8 @@ coding_constraints:
   - Every route is authenticated and role-checked through typed extractors unless listed in public_routes (RULE-RWE-021).
   - Every query on tenant data takes a TenantScope from the session and filters tenant_id in SQL (RULE-RWE-020).
   - SQL only via sqlx::query!/query_as!/query_scalar! or QueryBuilder::push_bind (RULE-RWE-001).
-  - HTML only from Askama templates; no |safe on user data, no inline scripts or styles, no hx-on (RULE-RWE-002, -042).
+  - Server HTML only from Askama templates; client rendering only via text APIs / framework escaping; no inline scripts or styles (RULE-RWE-002, -042).
+  - Session credentials only in the HttpOnly cookie; personal data in browser storage only for inventory categories marked offline (RULE-RWE-043).
   - Personal data only as Pii<T>; never log, Debug-print or serialize it outside the export DTOs (RULE-RWE-070).
   - Every new table column is classified in doc/privacy/data-inventory.yaml in the same change (RULE-RWE-071).
   - Errors from validation or dependencies abort the action; never continue with default values (RULE-RWE-060).
@@ -110,11 +120,13 @@ coding_constraints:
 
 # --- 5. Agent Instructions Fragment -----------------------------------------
 agent_instructions: |
-  TARGET PLATFORM: Server-rendered Rust web application (Axum, SQLx with SQLite, Askama templates, htmx).
+  TARGET PLATFORM: Web application with a Rust backend (Axum, SQLx with SQLite); the frontend variant (server-rendered
+  Askama, htmx, or SPA/PWA) and its extra rules come from the rulesets listed in the profile.
   Security and privacy are acceptance criteria, not polish: every handler takes a typed input DTO with
   deny_unknown_fields, converts it into validated domain types, checks the caller's role through an extractor and
-  scopes every data access to the session's tenant. Build HTML only in Askama templates with auto-escaping; keep the
-  pages CSP-compatible (no inline script/style, no hx-on, no js: expressions). Use only checked SQL macros or
+  scopes every data access to the session's tenant. Build server-side HTML only in Askama templates with
+  auto-escaping, return JSON APIs with serde, render untrusted data on the client only through text APIs or the
+  framework's escaping, and keep every page CSP-compatible (no inline script/style, no eval). Use only checked SQL macros or
   QueryBuilder with push_bind. Wrap personal data in Pii<T>. Return generic error pages with a correlation ID and log
   details with tracing as structured fields. Read configuration only in the config module. Do not add crates, routes
   that bypass authentication, CORS layers or outbound HTTP calls that the instructions do not name.

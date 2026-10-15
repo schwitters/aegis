@@ -228,7 +228,7 @@ Any external stage (1–4, 6–9) can be replaced by `gate.<stage>.command` (exi
 The process core remains invariant across projects. Domain-specific rigor is configured via `doc/<profile>.yaml`:
 - **Embedded Safety (`embedded-safety.yaml`)**: ASIL-D / ISO 26262, MISRA-C/Rust, no dynamic memory allocation, MC/DC coverage.
 - **Enterprise Backend (`enterprise.yaml`)**: High maintainability, compatibility, structured logging, branch coverage.
-- **Web Application (`web-enterprise.yaml`)**: Server-rendered Rust web apps (Axum, SQLx/SQLite, Askama, htmx), OWASP ASVS 5.0 L2 and GDPR; rulesets `rust-strict` + `rust-service` + `rust-web-enterprise`; two independent implementation reviews.
+- **Web Application (`web-enterprise.yaml`)**: Rust web backends (Axum, SQLx/SQLite) with a server-rendered, htmx or SPA/PWA frontend, OWASP ASVS 5.0 L2 and GDPR; rulesets `rust-strict` + `rust-service` + `rust-web-enterprise` (+ optional `rust-web-htmx`); two independent implementation reviews.
 - **Local-First (`local-first.yaml`)**: Desktop clients with an optional self-hosted server; privacy by architecture.
 
 ### Rulesets in the Gate
