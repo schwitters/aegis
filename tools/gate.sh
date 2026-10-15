@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Profile-aware Execution Gate (Delegates to Aegis Rust standalone CLI)
+# Profile-aware Execution Gate (delegates to the Aegis CLI). Builds the CLI on first use.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$ROOT/tools/target/release/aegis"
+# The repository root is a Cargo workspace: the binary lands in its target directory, not in tools/target.
+BIN="${CARGO_TARGET_DIR:-$ROOT/target}/release/aegis"
 
-if [ ! -f "$BIN" ]; then
-  cargo build --release --manifest-path "$ROOT/tools/Cargo.toml" --quiet
+if [ ! -x "$BIN" ]; then
+  cargo build --release --manifest-path "$ROOT/Cargo.toml" --quiet
 fi
 
 exec "$BIN" gate --root "$ROOT" "$@"

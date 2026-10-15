@@ -351,6 +351,14 @@ fn write_if_missing(path: &Path, content: &str) -> Result<()> {
 }
 
 pub fn run_init(root: &Path, opts: InitOptions) -> Result<()> {
+    if !matches!(opts.profile.as_str(), "enterprise" | "embedded-safety" | "safety" | "web-enterprise" | "web") {
+        anyhow::bail!(
+            "aegis init scaffolds the profiles web-enterprise, enterprise and embedded-safety. For `{}`, run init with \
+             --profile enterprise and copy doc/{}.yaml plus the rulesets it lists from the Aegis repository.",
+            opts.profile,
+            opts.profile
+        );
+    }
     let doc_dir = root.join("doc");
     let req_dir = doc_dir.join("requirements");
     let arch_dir = doc_dir.join("architecture");

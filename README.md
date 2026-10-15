@@ -7,7 +7,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Standards: ISO 25010 / ISO 26262](https://img.shields.io/badge/Standards-ISO%2025010%20%7C%20ISO%2026262-green.svg)](doc/dev-workflow.md)
-[![Traceability](https://img.shields.io/badge/Traceability-Bidirectional-brightgreen.svg)](doc/traceability.md)
+[![Traceability](https://img.shields.io/badge/Traceability-REQ%E2%86%92ARCH%E2%86%92UC%E2%86%92TEST%E2%86%92Code-brightgreen.svg)](doc/dev-workflow.md)
 
 *A rigorous, fail-closed engineering framework and standalone CLI toolkit designed for multi-agent LLM software development.*
 
@@ -117,11 +117,14 @@ review + `tests freeze` · escalations · final review. Everything else is gener
 
 ## 🌟 Overview
 
-**Aegis** bridges formal systems engineering (V-Model, Clean-Room Software Engineering, ISO 26262, DO-178C, ISO/IEC 25010) with modern agentic AI coding.
+**Aegis** applies systems engineering practice — V-Model, ISO/IEC 25010 quality model, traceability and change
+management in the style of ISO 26262 Part 8 — to agentic AI coding. It does not certify anything: for safety
+standards (ISO 26262, DO-178C) it supplies traceability and evidence, while tool qualification and the safety case
+remain the project's responsibility.
 
-Instead of relying on fragile single-agent prompts or passive chat reviews, Aegis orchestrates a **heterogeneous multi-model pipeline**:
-- **Frontier Models** (e.g. Claude 3.7 Sonnet / GPT-4.5) drive conceptual specifications, test case design, architecture, and blind parallel reviews.
-- **Local / Smaller Models** (e.g. Qwen 2.5 27B / Claude Haiku) implement deterministic code constrained by strict prompts and 3-tier rulesets.
+Instead of relying on fragile single-agent prompts or passive chat reviews, Aegis structures a **multi-model pipeline** by roles:
+- **Frontier models** (the strongest models available to you) drive specification, architecture, test design, test implementation and blind reviews — preferably from different model families for independent reviews.
+- **Implementation models** — a local model (e.g. a 27B–32B coder model) or a frontier model — fill in the code task by task, constrained by generated work packets, rulesets and the fast gate.
 - **Test Agents** implement the test plan *before* the production code; the tests are reviewed and frozen, so the implementation model cannot weaken them.
 - **Aegis CLI** acts as the deterministic supervisor: verifying traceability (`REQ → ARCH → UC → TEST → Code`), detecting suspect links against an approved baseline, calculating blast radius for changes, recording reviews, managing issue lifecycles, and enforcing fail-closed CI execution gates.
 
@@ -148,11 +151,12 @@ flowchart TD
         Freeze --> Comp
         Comp --> Task["Next task: one REQ"]
         Task --> Code["Implement (@implements REQ-xxx)"]
-        Code --> Fast{"Fast gate: build, lint, test_freeze, tests"}
+        Code --> Fast{"Fast gate: build, architecture, lint, test_freeze, tests"}
         Fast -->|red, attempts left| Code
         Fast -->|green| Task
-        Fast -->|limit reached| Esc["Escalation report"]
-        Esc --> Spec
+        Fast -->|limit reached| Esc["Escalation report + aegis escalate"]
+        Esc -->|frontier model, max 2 attempts| Code
+        Esc -->|spec or test defect| Spec
     end
 
     subgraph P3 ["3. Verification & Acceptance"]
@@ -196,8 +200,8 @@ flowchart TD
    - The gate enforces required independent approvals per stage, e.g. two blind architecture reviews.
 
 5. **Blast-Radius Impact Analyzer (`aegis impact`)**
-   - Ingests bug reports or feature requests and computes affected artifacts across docs, tests, and code.
-   - Recommends impact depth (*Implementation*, *Functional*, *Conceptual*) according to ISO 26262 Part 8.
+   - Starting from artifact IDs (`--target REQ-002`), a source file (`--code-file`) or everything changed since the baseline (`--changed`), it lists the affected requirements, architecture elements, use cases, tests, code locations and handbook pages.
+   - Maps the change kind (`--kind bug | feature | concept`) to an impact depth (*Implementation*, *Functional*, *Conceptual*) and a re-entry plan modelled on ISO 26262 Part 8; classifying the change is a human decision.
 
 6. **Issue Lifecycle Management (`aegis issue`)**
    - Version-controlled issues in `doc/issues/ISSUE-XXXX.md` with structured YAML frontmatter.
@@ -210,25 +214,27 @@ flowchart TD
    - Rust workspaces: the `architecture` stage enforces the layer policy on the crate graph (`aegis init --profile web-enterprise --name <project>` scaffolds domain / application / storage / api / server crates).
    - Decoupled, reusable rulesets for C11, C++, Rust, and Java operating across prompt instructions, review rubrics, and SAST linters.
 
-8. **Interactive Dashboard**
-   - Open [`doc/process-dashboard.html`](doc/process-dashboard.html) in any browser to inspect the real-time radar, ISO 25010 metrics, and interactive CLI simulator.
+8. **Process Overview Page**
+   - [`doc/process-dashboard.html`](doc/process-dashboard.html) is a static page that visualizes the process and the ISO 25010 axes; its CLI simulator covers only `trace`, `impact`, `issue` and `gate` (it reads no project data).
 
 ---
 
-## ⚡ One-Line Bootstrap (Add Aegis to any Project)
-
-Run this single command inside any new or existing repository to build and scaffold Aegis immediately:
+## ⚡ Manual Bootstrap (without an agent)
 
 ```bash
-# Greenfield (New Repository):
-git clone --depth 1 https://github.com/schwitters/aegis.git /tmp/aegis-bin && cargo build --release --manifest-path /tmp/aegis-bin/Cargo.toml && /tmp/aegis-bin/target/release/aegis init --profile enterprise --lang rust && rm -rf /tmp/aegis-bin
+# Recommended (pins the Aegis version in the repository; the agent flow above uses this):
+git submodule add https://github.com/schwitters/aegis.git tools/aegis
+cargo build --release --manifest-path tools/aegis/Cargo.toml
+./tools/aegis/target/release/aegis init --profile web-enterprise --lang rust --name myshop
 
-# Brownfield (Existing Codebase Migration):
-git clone --depth 1 https://github.com/schwitters/aegis.git /tmp/aegis-bin && cargo build --release --manifest-path /tmp/aegis-bin/Cargo.toml && /tmp/aegis-bin/target/release/aegis init --brownfield --profile enterprise --lang rust && rm -rf /tmp/aegis-bin
-
-# Alternatively, bind as a Git Submodule:
-git submodule add https://github.com/schwitters/aegis.git tools/aegis && cargo build --release --manifest-path tools/aegis/Cargo.toml && ./tools/aegis/target/release/aegis init --profile enterprise --lang rust
+# Alternatively install the CLI into ~/.cargo/bin (on PATH; the generated gate.sh finds it there):
+cargo install --git https://github.com/schwitters/aegis.git aegis
+aegis init --profile enterprise --lang rust                 # greenfield
+aegis init --brownfield --profile enterprise --lang rust    # existing codebase
 ```
+
+`aegis init` scaffolds `--profile web-enterprise`, `enterprise` and `embedded-safety`; for other profiles (e.g.
+`local-first`) copy `doc/<profile>.yaml` and the rulesets it lists from this repository.
 
 ---
 
@@ -237,10 +243,8 @@ git submodule add https://github.com/schwitters/aegis.git tools/aegis && cargo b
 ### 1. Build Aegis CLI Locally
 
 ```bash
-# Build release binary (zero external dependencies)
-cargo build --release
-
-# Add to PATH or symlink
+# Single self-contained binary; the gate stages call the project's toolchain (cargo, clippy, cargo-deny, ...)
+cargo build --release                       # -> target/release/aegis
 export PATH="$PATH:$(pwd)/target/release"
 ```
 
@@ -293,7 +297,7 @@ aegis review check --required spec architecture:2
 ### 6. Import an Existing Specification, Generate Work Packets
 
 ```bash
-aegis spec sections            # citable anchors of spec/*.md
+aegis spec sections            # citable units of spec/: Markdown headings, other files, prototype directories
 aegis spec check               # every section cited (source:) or excepted; writes doc/spec-coverage.md
 aegis tasks --profile doc/profile.yaml   # doc/tasks/TASK-*.md in layer order (needs baseline + frozen tests)
 ```
@@ -316,31 +320,34 @@ aegis gate --profile doc/profile.yaml
 
 ## 📁 Repository Structure
 
+This repository (Aegis itself):
+
 ```
+├── Cargo.toml                  # Workspace root (member: tools/)
+├── LICENSE                     # MIT
 ├── doc/
-│   ├── dev-workflow.md         # Full V-Model specification & DoD
+│   ├── dev-workflow.md         # Process specification, DoD, gate stages
 │   ├── change-runbook.md       # Change management & impact protocol
-│   ├── adoption-guide.md       # Greenfield & brownfield practical guide
-│   ├── prompts/                # Complete Prompt Playbook (Stages 01 - 07, incl. 04b test implementation)
-│   ├── process-evaluation.md   # Architectural evaluation
-│   ├── process-dashboard.html  # Interactive UI & simulator
-│   ├── embedded-safety.yaml    # ISO 26262 / ASIL-D profile
-│   ├── enterprise.yaml         # Cloud-native backend profile
-│   ├── rules/                  # Strict language rulesets (C11, C++, Rust, Java)
-│   ├── requirements/           # REQ-001.md, ...
-│   ├── architecture/           # ARCH-001.md, ... (satisfies: [REQ-xxx])
-│   ├── usecases/               # UC-001.md, ...
-│   ├── testplan/               # TEST-001.md, ... + tests.lock
-│   ├── reviews/                # REVIEW-0001.md, ... (review records)
-│   ├── baseline.lock           # Approved specification baseline
-│   ├── deliverables/           # Deliverables manifest
-│   └── issues/                 # ISSUE-0001.md, ...
-├── tools/                      # Aegis Rust Standalone CLI
-│   ├── Cargo.toml
-│   ├── src/
-│   └── gate.sh                 # Thin auto-building wrapper
-└── README.md
+│   ├── adoption-guide.md       # Greenfield & brownfield guide
+│   ├── process-evaluation.md   # Process assessment, risks & mitigations
+│   ├── process-dashboard.html  # Static process overview page
+│   ├── prompts/                # Prompt playbook: 00 (spec import) … 08 (handbooks), incl. 04b test implementation
+│   ├── rules/                  # Rulesets: C11, C++, Java, Rust (rust-strict, rust-service, rust-egui,
+│   │                           #   rust-web-enterprise + overlays rust-web-htmx / rust-web-pwa, rust-safety)
+│   ├── web-enterprise.yaml     # Profile: Rust web apps (ASVS L2, GDPR, layered workspace, handbooks)
+│   ├── enterprise.yaml         # Profile: backend services
+│   ├── local-first.yaml        # Profile: desktop + self-hosted server
+│   └── embedded-safety.yaml    # Profile: safety-critical firmware (ISO 26262 / ASIL-D)
+├── templates/
+│   ├── rust/                   # clippy.toml, deny.toml, rustfmt.toml, rust-toolchain.toml, workspace lints
+│   └── rust-web/               # clippy.toml, deny.toml for web-enterprise
+└── tools/                      # Aegis CLI (Rust): src/, gate.sh (builds the CLI on first use and runs the gate)
 ```
+
+A project under Aegis gets: `spec/` (input), `doc/` with `profile.yaml`, `requirements/`, `architecture/`,
+`usecases/`, `testplan/` (+ `tests.lock`), `reviews/`, `issues/`, `tasks/`, `deliverables/`, `baseline.lock`,
+`spec-coverage.md`, `traceability.md` — plus, for web-enterprise, the layered `crates/`, `tests/`, `migrations/`,
+`openapi/` and the four handbooks under `docs/`.
 
 ---
 
@@ -352,10 +359,10 @@ aegis gate --profile doc/profile.yaml
 - 🔄 [Change Management Runbook](doc/change-runbook.md)
 - ⚖️ [Architectural Evaluation](doc/process-evaluation.md)
 - 📐 [Coding Rulesets Catalog](doc/rules/README.md)
-- 🛡️ [Domain Profiles Reference](doc/embedded-safety.yaml)
+- 🛡️ Domain profiles: [web-enterprise](doc/web-enterprise.yaml) · [enterprise](doc/enterprise.yaml) · [local-first](doc/local-first.yaml) · [embedded-safety](doc/embedded-safety.yaml)
 
 ---
 
 ## 📜 License
 
-Distributed under the MIT License.
+Distributed under the [MIT License](LICENSE). Copyright (c) 2026 Kurt Schwitters.

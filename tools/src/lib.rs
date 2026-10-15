@@ -1014,4 +1014,13 @@ agent_loop:\n  max_iterations: 2\n  fast_stages: [build, tests]\n";
         assert!(secrets.is_match("tracing::info!(user = %id, token = %t, \"login\");"));
         assert!(!secrets.is_match("tracing::info!(user = %id, \"login\");"));
     }
+
+    #[test]
+    fn test_init_rejects_unknown_profile() {
+        let root = temp_root("init_unknown");
+        let e = init::run_init(&root, init::InitOptions { profile: "local-first".into(), lang: "rust".into(), brownfield: false, name: None }).unwrap_err();
+        assert!(e.to_string().contains("copy doc/local-first.yaml"), "{}", e);
+        assert!(!root.join("doc").exists(), "nothing scaffolded with the wrong profile");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
