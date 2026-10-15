@@ -1,9 +1,10 @@
 ruleset: rust-web-enterprise
 description: >
-  Rust web applications (Axum, SQLx/SQLite, Askama, htmx) with multi-tenant isolation,
-  aligned with OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design).
+  Server-rendered Rust web applications (Axum, SQLx/SQLite, Askama, htmx), optionally multi-tenant,
+  aligned with OWASP ASVS 5.0.0 Level 2 and the GDPR (privacy by design). Product-independent:
+  domain-specific limits, roles and tables are defined by the project, not by this ruleset.
   Complements rust-safety.yaml; rules defined there are not repeated here.
-standard: "OWASP ASVS 5.0.0 (L2); GDPR Art. 5, 15, 17, 20, 25, 32; TDDDG §25"
+standard: "OWASP ASVS 5.0.0 (L2); GDPR Art. 5, 15, 17, 20, 25, 32; ePrivacy Directive Art. 5(3) (e.g. TDDDG §25)"
 language: rust
 extends:
   - doc/rules/rust-safety.yaml
@@ -59,7 +60,7 @@ rules:
     verification: lint
     instruction: >
       std::process::Command is forbidden. PDF generation, image processing, etc. via Rust crates.
-      Exceptions only in the worker crate, with a fixed argument list, no user input, and a review.
+      Exceptions only in one dedicated, reviewed module, with a fixed argument list and no user input.
     rationale: Prevents OS command injection.
     linter_check: "clippy-disallowed:std::process::Command::new"
     references:
@@ -71,9 +72,9 @@ rules:
     severity: warning
     verification: test
     instruction: >
-      Every CSV/Excel export (order history, bills of materials) goes through a central
-      function that prefixes cells starting with = + - @ tab or CR with ' and quotes per RFC 4180.
-    rationale: Customers open exports in Excel; part names partly originate from external systems.
+      Every CSV/spreadsheet export goes through a central function that prefixes cells
+      starting with = + - @ tab or CR with ' and quotes per RFC 4180.
+    rationale: Users open exports in spreadsheet software; exported values may originate from users or external systems.
     linter_check: "test:csv_export_neutralizes_formulas"
     references:
       asvs: ["v5.0.0-1.2.10"]
@@ -87,7 +88,7 @@ rules:
     instruction: >
       Every handler accepts its own input DTO with #[serde(deny_unknown_fields)],
       never a database or domain struct. The DTO is converted via TryFrom into validated
-      domain types (PartNumber, Quantity, CompanyId, ...); only these reach the business logic.
+      domain types (e.g. EmailAddress, Quantity, TenantId); only these reach the business logic.
       Validation happens exclusively server-side in the domain crate.
     rationale: Prevents mass assignment and ensures positive validation at a trusted layer.
     linter_check: "test:dto_rejects_unknown_fields"
@@ -103,23 +104,24 @@ rules:
       Responses (HTML context or JSON) are built from dedicated view structs containing only
       the fields that are displayed. Database rows are never serialized directly
       or passed whole to templates.
-    rationale: Prevents accidental disclosure of fields (purchase prices, internal notes, personal data).
+    rationale: Prevents accidental disclosure of fields (internal attributes, other users' data, personal data).
     references:
       asvs: ["v5.0.0-15.3.1"]
       gdpr: ["Art. 5(1)(c) (data minimisation)"]
 
   - id: RULE-RWE-012
-    title: Atomic order placement and stock handling
+    title: Atomic multi-step state changes and conditional updates
     category: concurrency
     severity: error
     verification: test
     instruction: >
-      Order completion, stock reservation, and status transitions run in a single transaction
-      (SQLite: BEGIN IMMEDIATE). Stock is only decremented conditionally:
-      UPDATE ... SET stock = stock - ?1 WHERE id = ?2 AND stock >= ?1, then check rows_affected.
-      Order status is modelled as a typestate or an enum with explicit allowed transitions in the domain crate.
-    rationale: Prevents overselling and skipping checkout steps.
-    linter_check: "test:concurrent_checkout_never_oversells"
+      Business operations that change several rows or depend on a read value run in a single
+      transaction (SQLite: BEGIN IMMEDIATE). Limited resources (quantities, quotas, seats, balances)
+      are only changed conditionally, e.g. UPDATE ... SET n = n - ?1 WHERE id = ?2 AND n >= ?1,
+      followed by a rows_affected check; never read-modify-write in application code.
+      Lifecycle states are modelled as a typestate or an enum with explicit allowed transitions in the domain layer.
+    rationale: Prevents race conditions (lost updates, over-allocation) and skipped workflow steps.
+    linter_check: "test:concurrent_conditional_update_never_overallocates"
     references:
       asvs: ["v5.0.0-2.3.1", "v5.0.0-2.3.3", "v5.0.0-2.3.4", "v5.0.0-15.4.2"]
 
@@ -129,9 +131,9 @@ rules:
     severity: warning
     verification: test
     instruction: >
-      Maximum line items per order, quantity per line item, rows in the quick-order import,
-      and upload sizes are constants in domain::limits and are used in DTO validation
-      and DefaultBodyLimit. No scattered magic numbers.
+      All business limits (collection sizes, numeric ranges, import row counts, upload sizes)
+      are constants in domain::limits and are used in DTO validation and DefaultBodyLimit.
+      No scattered magic numbers.
     rationale: Documented, enforced limits against abuse and resource exhaustion.
     linter_check: "test:limits_enforced_at_boundary"
     references:
@@ -139,17 +141,18 @@ rules:
 
   # ---------------------------------------------------------------- Authorization / tenants
   - id: RULE-RWE-020
-    title: Every access to tenant data is bound to the company
+    title: Every access to tenant data is bound to the tenant
     category: security
     severity: error
     verification: test
     instruction: >
-      Repository functions for tenant-scoped tables (orders, order_items, machines,
-      carts, users, addresses, invoices) take a TenantScope (derived from the session, never from
-      URL or form data) as their first parameter and filter in SQL with company_id = ?.
-      Object IDs in URLs without a TenantScope check are forbidden.
-    rationale: Prevents IDOR/BOLA, the most common critical flaw in B2B portals.
-    linter_check: "test:static_tenant_scope (checks all queries in .sqlx/*.json for company_id)"
+      (Multi-tenant applications.) Every table holding tenant data carries a tenant_id column and is marked
+      tenant-scoped in the data inventory (RULE-RWE-071). Repository functions for these tables take a
+      TenantScope (derived from the session, never from URL or form data) as their first parameter and
+      filter in SQL with tenant_id = ?. Object IDs in URLs without a TenantScope check are forbidden.
+      Single-tenant applications apply the same pattern to per-user ownership (owner_id).
+    rationale: Prevents IDOR/BOLA, the most common critical flaw in multi-tenant applications.
+    linter_check: "test:static_tenant_scope (checks all queries in .sqlx/*.json on tenant-scoped tables for tenant_id)"
     references:
       asvs: ["v5.0.0-8.2.1", "v5.0.0-8.2.2", "v5.0.0-8.3.1"]
 
@@ -159,9 +162,9 @@ rules:
     severity: error
     verification: test
     instruction: >
-      Function-level permissions (purchaser, technician, company admin, internal admin) are enforced
-      through typed Axum extractors, e.g. RequireRole<Purchaser>. A handler without such an extractor
-      is public and must be listed in the public_routes allowlist.
+      Function-level permissions are enforced through typed Axum extractors per role defined by the
+      project, e.g. RequireRole<TenantAdmin>. A handler without such an extractor is public and must be
+      listed in the public_routes allowlist.
     rationale: Default deny, mechanically verifiable.
     linter_check: "test:every_route_is_authorized_or_allowlisted"
     references:
@@ -204,7 +207,8 @@ rules:
     severity: error
     verification: test
     instruction: >
-      TOTP (totp-rs) is available for all accounts and mandatory for internal admins and company admins.
+      TOTP (totp-rs) is available for all accounts and mandatory for privileged roles
+      (administrators, operators, support staff with access to other users' data).
       Codes are single-use, seeds generated with a CSPRNG. No SMS OTP.
       Password reset must not bypass MFA.
     rationale: ASVS L2 requires MFA or an equivalent combination of factors for access.
@@ -257,7 +261,7 @@ rules:
     linter_check: "test:security_headers_on_all_routes; clippy-disallowed:tower_http::cors::CorsLayer::permissive"
     references:
       asvs: ["v5.0.0-3.4.1", "v5.0.0-3.4.2", "v5.0.0-3.4.3", "v5.0.0-3.4.4", "v5.0.0-3.4.5", "v5.0.0-3.4.6", "v5.0.0-14.3.2"]
-      gdpr: ["Art. 44 ff. (no transfers to third parties)", "TDDDG §25"]
+      gdpr: ["Art. 44 ff. (no transfers to third parties)", "ePrivacy Directive Art. 5(3)"]
 
   - id: RULE-RWE-043
     title: No sensitive data in URLs or browser storage
@@ -266,7 +270,7 @@ rules:
     verification: review
     instruction: >
       Never put tokens, email addresses, or session IDs in query strings or paths
-      (exception: single-use, short-lived password reset links). No localStorage/sessionStorage for customer data.
+      (exception: single-use, short-lived password reset links). No localStorage/sessionStorage for user data.
     rationale: URLs end up in logs, browser history, and Referer headers.
     references:
       asvs: ["v5.0.0-14.2.1", "v5.0.0-14.3.3"]
@@ -278,7 +282,7 @@ rules:
     severity: error
     verification: test
     instruction: >
-      Uploads (quick-order CSV, attachments) are limited with DefaultBodyLimit from domain::limits.
+      Uploads (imports, attachments) are limited with DefaultBodyLimit from domain::limits.
       Check the type by content, not only by extension. Storage paths are internally generated UUIDs;
       user-supplied file names are metadata only and encoded per RFC 6266 in Content-Disposition.
     rationale: Prevents path traversal and denial of service.
@@ -295,8 +299,8 @@ rules:
     instruction: >
       A central AppError implements IntoResponse and returns only a generic message
       plus a correlation ID. Details (SQL, paths, debug output) go to the log only.
-      On errors in validation or ERP queries, the action is aborted and never
-      continued with default values (e.g. no price of 0 when the ERP is unavailable).
+      On errors in validation or calls to external systems, the action is aborted and never
+      continued with default values (e.g. no price of 0 or default permission when a dependency is unavailable).
     rationale: No information leakage, no fail-open behaviour.
     linter_check: "test:internal_error_is_generic"
     references:
@@ -358,7 +362,7 @@ rules:
     instruction: >
       The worker periodically applies the retention rules from the data inventory.
       Personal data without a retention obligation is deleted; data subject to commercial
-      or tax retention obligations (invoices, orders) is restricted (restriction of processing)
+      or tax retention obligations (e.g. invoices, contracts) is restricted (restriction of processing)
       and deleted once the period expires. Account deletion terminates all sessions and
       removes login data immediately. Retention periods come from the inventory, never as constants in code.
     rationale: Storage limitation and right to erasure, reconciled with statutory retention obligations.
@@ -387,13 +391,13 @@ rules:
     verification: lint
     instruction: >
       No external scripts, fonts, images, analytics, or maps. Outbound HTTP connections
-      only to hosts in config.outbound_allowlist (ERP, mail relay, backup storage), only with rustls
+      only to hosts in config.outbound_allowlist (e.g. backend systems, mail relay, backup storage), only with rustls
       and certificate validation. Extending the allowlist requires an issue referencing the DPA.
     rationale: Every third party is a data transfer and may require consent.
     linter_check: "clippy-disallowed:reqwest::ClientBuilder::danger_accept_invalid_certs; test:security_headers_on_all_routes (CSP)"
     references:
       asvs: ["v5.0.0-12.3.2", "v5.0.0-13.2.4", "v5.0.0-14.2.3"]
-      gdpr: ["Art. 28", "Art. 44 ff.", "TDDDG §25"]
+      gdpr: ["Art. 28", "Art. 44 ff.", "ePrivacy Directive Art. 5(3)"]
 
   - id: RULE-RWE-075
     title: Privacy-preserving logs and backups
@@ -402,7 +406,7 @@ rules:
     verification: review
     instruction: >
       IP addresses in logs only truncated or hashed with a rotating salt, except in
-      security events. Log retention comes from configuration. Backups (Litestream) are encrypted.
+      security events. Log retention comes from configuration. Backups and replicas (e.g. Litestream) are encrypted.
     rationale: Technical data is personal data too.
     references:
       asvs: ["v5.0.0-16.2.5"]
