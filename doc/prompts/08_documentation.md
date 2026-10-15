@@ -52,4 +52,4 @@ OUTPUT: the complete Markdown files with paths, plus a table UC-ID | page(s).
 1. `mkdocs build --strict -f docs/<handbook>/mkdocs.yml` (part of the gate stage `deliverables`).
 2. `aegis trace` — no `GAP UC-xxx: not documented in the <audience> handbook`, no `SUSPECT` documentation pages.
 3. Review (stage `documentation`): audience fit, correctness against the use cases, no personal data or secrets, no TODO(verify) left.
-4. `docs/build.sh` produces the PDFs and the CSP hashes for `/help` and `/admin-help`.
+4. `aegis docs csp-hashes --site docs/<handbook>/site` produces the CSP hashes for `/help` and `/admin-help`.
